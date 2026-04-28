@@ -1,0 +1,21 @@
+[configuration]
+
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "4.5"
+reloadable = true
+
+[libraries]
+
+linux.debug.x86_64     = "res://../target/debug/libgodot_qengine.so"
+linux.release.x86_64   = "res://../target/release/libgodot_qengine.so"
+linux.debug.arm64      = "res://../target/debug/libgodot_qengine.so"
+linux.release.arm64    = "res://../target/release/libgodot_qengine.so"
+windows.debug.x86_64   = "res://../target/debug/godot_qengine.dll"
+windows.release.x86_64 = "res://../target/release/godot_qengine.dll"
+macos.debug            = "res://../target/debug/libgodot_qengine.dylib"
+macos.release          = "res://../target/release/libgodot_qengine.dylib"
+
+[icons]
+
+AudioEffectQEngine    = "res://addons/qengine/icon_qengine.svg"
+QEngineDetectorNode   = "res://addons/qengine/icon_detector.svg"

@@ -1,0 +1,23 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; but you can always edit it manually.
+
+[configuration]
+
+config_version=5
+
+[application]
+
+config/name="QEngine Guitar Pitch Demo"
+config/description="Godot 4.5 demo for QEngine – real-time guitar pitch detection via cycfi/Q (Rust FFI)"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.5", "C#")
+
+[audio]
+
+driver/output_latency=15
+bus_layout="res://default_bus_layout.tres"
+
+[rendering]
+
+renderer/rendering_method="forward_plus"

@@ -1,0 +1,67 @@
+[gd_scene load_steps=3 format=3 uid="uid://qengine_main"]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/guitar_detector.gd" id="2_detector"]
+
+[node name="Main" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_main")
+
+[node name="Background" type="ColorRect" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.1, 0.1, 0.12, 1)
+
+[node name="VBox" type="VBoxContainer" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/separation = 8
+offset_left = 20.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = -20.0
+
+[node name="TitleLabel" type="Label" parent="VBox"]
+text = "🎸  QEngine Guitar Pitch Detector"
+theme_override_font_sizes/font_size = 22
+
+[node name="TuningHBox" type="HBoxContainer" parent="VBox"]
+
+[node name="TuningLabel" type="Label" parent="VBox/TuningHBox"]
+text = "Tuning:"
+theme_override_font_sizes/font_size = 14
+
+[node name="TuningOption" type="OptionButton" parent="VBox/TuningHBox"]
+custom_minimum_size = Vector2(140, 0)
+
+[node name="ThresholdHBox" type="HBoxContainer" parent="VBox"]
+
+[node name="ThresholdLabel" type="Label" parent="VBox/ThresholdHBox"]
+text = "Threshold (dB):"
+theme_override_font_sizes/font_size = 14
+
+[node name="ThresholdSlider" type="HSlider" parent="VBox/ThresholdHBox"]
+custom_minimum_size = Vector2(200, 0)
+min_value = -80.0
+max_value = -10.0
+value = -45.0
+
+[node name="ThresholdValue" type="Label" parent="VBox/ThresholdHBox"]
+text = "-45 dB"
+theme_override_font_sizes/font_size = 14
+
+[node name="Separator" type="HSeparator" parent="VBox"]
+
+[node name="StringsGrid" type="GridContainer" parent="VBox"]
+columns = 5
+theme_override_constants/h_separation = 16
+theme_override_constants/v_separation = 8
+
+[node name="StatusBar" type="Label" parent="VBox"]
+text = "Status: idle — add a microphone AudioStreamMicrophone to an AudioStreamPlayer and route to Capture bus"
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 3
+
+[node name="QEngineDetectorNode" type="Node" parent="."]
+script = ExtResource("2_detector")

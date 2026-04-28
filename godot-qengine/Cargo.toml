@@ -1,0 +1,18 @@
+[package]
+name        = "godot-qengine"
+description = "Godot 4.5 GDExtension: AudioEffectQEngine and QEngineDetectorNode for guitar pitch detection"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[lib]
+# Compile as a GDExtension dynamic library.
+crate-type = ["cdylib"]
+
+[dependencies]
+godot         = "0.5"
+qengine-core  = { path = "../qengine-core" }
+qengine-sys   = { path = "../qengine-sys" }
+rtrb          = "0.3"

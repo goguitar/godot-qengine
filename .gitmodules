@@ -1,0 +1,6 @@
+[submodule "third_party/q"]
+	path = third_party/q
+	url = https://github.com/cycfi/q.git
+[submodule "third_party/infra"]
+	path = third_party/infra
+	url = https://github.com/cycfi/infra.git
