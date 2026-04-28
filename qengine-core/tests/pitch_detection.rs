@@ -150,6 +150,116 @@ fn standard_twelfth_fret_e2_string_e3() {
 }
 
 // ===========================================================================
+// Em chord detection
+//
+// An Em (E minor) chord contains three pitch classes:
+//   E – root
+//   G – minor third
+//   B – perfect fifth
+//
+// Open Em on guitar (Standard tuning) — one note per string band:
+//   Band 0 → E2  (82.41 Hz)  — low E string, open
+//   Band 1 → B2 (123.47 Hz)  — A string, 2nd fret
+//   Band 2 → E3 (164.81 Hz)  — D string, 2nd fret
+//   Band 3 → G3 (196.00 Hz)  — G string, open
+//   Band 4 → B3 (246.94 Hz)  — B string, open
+//   Band 5 → E4 (329.63 Hz)  — high E string, open
+//
+// Q's pitch_detector is a per-band monophonic algorithm designed for
+// hexaphonic (one pickup per string) use.  Each string's frequency is
+// therefore validated through its dedicated band; the chord test then asserts
+// that the union of detected note classes equals {E, G, B}.
+// ===========================================================================
+
+/// (frequency_hz, band_index, expected_note_display)
+const EM_CHORD_STRINGS: &[(f32, usize, &str)] = &[
+    (82.41,  0, "E2"),
+    (123.47, 1, "B2"),
+    (164.81, 2, "E3"),
+    (196.00, 3, "G3"),
+    (246.94, 4, "B3"),
+    (329.63, 5, "E4"),
+];
+
+/// Extract the pitch-class letter(s) from a note-display string.
+/// "E2" → "E",  "G3" → "G",  "C#4" → "C#"
+fn pitch_class(note_display: &str) -> String {
+    let octave_start = note_display
+        .find(|c: char| c.is_ascii_digit())
+        .unwrap_or(note_display.len());
+    note_display[..octave_start].to_string()
+}
+
+/// Test 1 – three unique pitch classes (E, G, B) are each detected.
+///
+/// Feeds one representative frequency per Em pitch class through its
+/// dedicated band and asserts all three are identified.
+#[test]
+fn em_chord_three_pitch_classes_detected() {
+    // E2 (band 0) → "E",  G3 (band 3) → "G",  B3 (band 4) → "B"
+    let em_three: &[(f32, usize)] = &[
+        (82.41,  0),
+        (196.00, 3),
+        (246.94, 4),
+    ];
+
+    let mut detected: Vec<String> = Vec::new();
+    for &(freq, band) in em_three {
+        let (_, note) = detect_sine(freq, TuningId::Standard, band);
+        if let Some(display) = note {
+            detected.push(pitch_class(&display));
+        }
+    }
+
+    for expected_class in &["E", "G", "B"] {
+        assert!(
+            detected.iter().any(|n| n == expected_class),
+            "Em chord: pitch class '{expected_class}' not detected; got {detected:?}"
+        );
+    }
+}
+
+/// Test 2 – every string of the open Em chord returns the correct note name.
+///
+/// Processes all six string frequencies through their dedicated bands and
+/// checks the exact note display (e.g. "E2", "B2", …).
+#[test]
+fn em_chord_open_six_strings_per_band() {
+    for &(freq, band, expected_display) in EM_CHORD_STRINGS {
+        let (raw_freq, note) = detect_sine(freq, TuningId::Standard, band);
+        assert_eq!(
+            note.as_deref(),
+            Some(expected_display),
+            "Em open chord band {band} ({freq} Hz): expected {expected_display}, \
+             got {note:?} (raw: {raw_freq:.2} Hz)"
+        );
+    }
+}
+
+/// Test 3 – the union of note classes across all six Em strings is exactly {E, G, B}.
+///
+/// Collects the pitch-class letter from every band result and asserts the set
+/// equals the Em triad, confirming no extraneous notes are reported.
+#[test]
+fn em_chord_note_classes_are_exactly_e_g_b() {
+    let detected: std::collections::HashSet<String> = EM_CHORD_STRINGS
+        .iter()
+        .filter_map(|&(freq, band, _)| {
+            let (_, note_opt) = detect_sine(freq, TuningId::Standard, band);
+            note_opt.map(|display| pitch_class(&display))
+        })
+        .collect();
+
+    let expected: std::collections::HashSet<String> =
+        ["E", "G", "B"].iter().map(|&s| s.to_string()).collect();
+
+    assert_eq!(
+        detected, expected,
+        "Em chord: expected pitch classes {{E, G, B}}, got {detected:?}"
+    );
+}
+
+// ===========================================================================
 // Dataset test (skipped unless env-var is set)
 // ===========================================================================
 
