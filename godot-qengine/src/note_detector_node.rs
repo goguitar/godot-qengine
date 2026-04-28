@@ -108,7 +108,7 @@ impl QEngineDetectorNode {
         let results: Vec<DetectionResult> = det.process();
         let filtered: Vec<DetectionResult> = results
             .into_iter()
-            .filter(|r| r.raw_freq > 0.0 || r.periodicity >= min_p)
+            .filter(|r| r.raw_freq > 0.0 && r.periodicity >= min_p)
             .collect();
         detection_results_to_array(filtered)
     }

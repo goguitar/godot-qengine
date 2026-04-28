@@ -2,7 +2,7 @@
 ## Displays per-string detection results in a grid of UI labels.
 extends Control
 
-# ─── tunig options ──────────────────────────────────────────────────────────
+# ─── tuning options ──────────────────────────────────────────────────────────
 const TUNINGS := ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
 
 # ─── node refs ──────────────────────────────────────────────────────────────
