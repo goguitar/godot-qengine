@@ -2,59 +2,57 @@
 ## Displays per-string detection results in a grid of UI labels.
 extends Control
 
-# ─── tuning options ──────────────────────────────────────────────────────────
-const TUNINGS: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
+const TUNINGS: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC"]
+const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
 
-# ─── node refs ──────────────────────────────────────────────────────────────
-@onready var _tuning_opt    : OptionButton = $VBox/TuningHBox/TuningOption
-@onready var _thresh_slider : HSlider      = $VBox/ThresholdHBox/ThresholdSlider
-@onready var _thresh_label  : Label        = $VBox/ThresholdHBox/ThresholdValue
-@onready var _strings_grid  : GridContainer = $VBox/StringsGrid
-@onready var _status_bar    : Label        = $VBox/StatusBar
+@onready var _tuning_opt: OptionButton = $VBox/TuningHBox/TuningOption
+@onready var _thresh_slider: HSlider = $VBox/ThresholdHBox/ThresholdSlider
+@onready var _thresh_label: Label = $VBox/ThresholdHBox/ThresholdValue
+@onready var _strings_grid: GridContainer = $VBox/StringsGrid
+@onready var _status_bar: Label = $VBox/StatusBar
 @onready var _detector_node: QEngineDetectorNode = $QEngineDetectorNode
 
-# Per-band UI labels: [string_lbl, freq_lbl, note_lbl, cents_lbl, conf_lbl]
-var _band_labels : Array = []
+var _band_labels: Array = []
 
-# ─── AudioEffect reference on the Master bus ────────────────────────────────
 var _audio_effect: AudioEffectQEngine = null
+var _dataset_player: AudioStreamPlayer = null
+var _dataset_monitor_player: AudioStreamPlayer = null
+var _dataset_single_file: bool = false
+var _dataset_single_path: String = ""
+var _dataset_all_files: PackedStringArray = []
+var _dataset_files: PackedStringArray = []
+var _dataset_index: int = 0
 
-# ─── _ready ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
-	# Populate tuning dropdown
 	for t in TUNINGS:
 		_tuning_opt.add_item(t)
 	_tuning_opt.selected = 0
 	_tuning_opt.item_selected.connect(_on_tuning_changed)
 
-	# Threshold slider
 	_thresh_slider.value_changed.connect(_on_threshold_changed)
 
-	# Build per-band label rows
 	_build_string_labels()
+	_ensure_audio_effect_on_capture_bus()
+	_setup_dataset_playback()
 
-	# Ensure AudioEffectQEngine is present on the Master bus.
-	_ensure_audio_effect_on_master_bus()
-
-	# Connect detector node signal (fallback path)
-	if _detector_node and _detector_node.has_signal("notes_detected"):
+	if _audio_effect == null and _detector_node and _detector_node.has_signal("notes_detected"):
 		_detector_node.connect("notes_detected", _on_notes_detected)
 
-func _ensure_audio_effect_on_master_bus() -> void:
-	var bus_idx := AudioServer.get_bus_index("Master")
+func _ensure_audio_effect_on_capture_bus() -> void:
+	var bus_idx := AudioServer.get_bus_index("Capture")
 	if bus_idx < 0:
-		_status_bar.text = "Status: Master bus not found – using QEngineDetectorNode"
+		_status_bar.text = "Status: Capture bus not found – using QEngineDetectorNode"
 		return
 
 	for i in AudioServer.get_bus_effect_count(bus_idx):
 		var fx := AudioServer.get_bus_effect(bus_idx, i)
 		if fx is AudioEffectQEngine:
 			_audio_effect = fx
-			_status_bar.text = "Status: AudioEffectQEngine found on Master bus"
+			_status_bar.text = "Status: AudioEffectQEngine found on Capture bus"
 			return
 		if fx and fx.has_method("poll_notes"):
 			_audio_effect = fx
-			_status_bar.text = "Status: AudioEffectQEngine found on Master bus"
+			_status_bar.text = "Status: AudioEffectQEngine found on Capture bus"
 			return
 
 	var new_fx := ClassDB.instantiate("AudioEffectQEngine") as AudioEffectQEngine
@@ -66,50 +64,205 @@ func _ensure_audio_effect_on_master_bus() -> void:
 	new_fx.threshold_db = _thresh_slider.value
 	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
 	_audio_effect = new_fx
-	_status_bar.text = "Status: AudioEffectQEngine added to Master bus"
+	_status_bar.text = "Status: AudioEffectQEngine added to Capture bus"
 
-# ─── _process ───────────────────────────────────────────────────────────────
+func _setup_dataset_playback() -> void:
+	_dataset_single_file = false
+	_dataset_single_path = ""
+	_dataset_all_files = []
+	_dataset_files = []
+	_dataset_index = 0
+
+	var dataset_file: String = OS.get_environment("QENGINE_DATASET_FILE")
+	if dataset_file.is_empty():
+		var dataset_dir: String = OS.get_environment("QENGINE_DATASET_DIR")
+		if dataset_dir.is_empty():
+			dataset_dir = DEFAULT_DATASET_DIR
+
+		var dir := DirAccess.open(dataset_dir)
+		if dir == null:
+			_status_bar.text = "Status: dataset dir not found"
+			return
+
+		var wav_files: PackedStringArray = []
+		dir.list_dir_begin()
+		while true:
+			var name: String = dir.get_next()
+			if name.is_empty():
+				break
+			if dir.current_is_dir():
+				continue
+			if name.to_lower().ends_with("_solo_mic.wav"):
+				wav_files.append(name)
+		dir.list_dir_end()
+
+		if wav_files.is_empty():
+			_status_bar.text = "Status: no *_solo_mic.wav files in dataset dir"
+			return
+
+		wav_files.sort()
+		for wav in wav_files:
+			_dataset_all_files.append(dataset_dir.path_join(wav))
+
+		_rebuild_dataset_playlist()
+		if _dataset_files.is_empty():
+			_dataset_files = _dataset_all_files
+		dataset_file = _dataset_files[0]
+	else:
+		_dataset_single_file = true
+		_dataset_single_path = dataset_file
+		_dataset_files = [dataset_file]
+
+	var stream: AudioStreamWAV = _load_wav(dataset_file)
+	if stream == null:
+		_status_bar.text = "Status: failed to load dataset WAV"
+		return
+
+	if _dataset_player == null:
+		_dataset_player = AudioStreamPlayer.new()
+		_dataset_player.bus = "Capture"
+		add_child(_dataset_player)
+	if _dataset_monitor_player == null:
+		_dataset_monitor_player = AudioStreamPlayer.new()
+		_dataset_monitor_player.bus = "Master"
+		add_child(_dataset_monitor_player)
+
+	_dataset_player.stream = stream
+	_dataset_monitor_player.stream = stream
+	_dataset_player.play()
+	_dataset_monitor_player.play()
+	_status_bar.text = "Status: dataset playback [%s] on Capture bus (%s)" % [
+		String(TUNINGS[_tuning_opt.selected]),
+		dataset_file.get_file(),
+	]
+
+func _load_wav(path: String) -> AudioStreamWAV:
+	if path.begins_with("res://"):
+		return ResourceLoader.load(path, "AudioStreamWAV") as AudioStreamWAV
+	return AudioStreamWAV.load_from_file(path)
+
 func _process(_delta: float) -> void:
-	# Preferred path: poll the AudioEffectQEngine directly if available
 	if _audio_effect:
 		_on_notes_detected(_audio_effect.poll_notes())
 
-# ─── UI callbacks ────────────────────────────────────────────────────────────
+	if _dataset_player and _dataset_files.size() > 1 and not _dataset_player.playing:
+		_dataset_index = (_dataset_index + 1) % _dataset_files.size()
+		var next_stream: AudioStreamWAV = _load_wav(_dataset_files[_dataset_index])
+		if next_stream:
+			_dataset_player.stream = next_stream
+			if _dataset_monitor_player:
+				_dataset_monitor_player.stream = next_stream
+			_dataset_player.play()
+			if _dataset_monitor_player:
+				_dataset_monitor_player.play()
+
 func _on_tuning_changed(index: int) -> void:
 	if _audio_effect:
 		_audio_effect.tuning = String(TUNINGS[index])
 	if _detector_node:
 		_detector_node.tuning = String(TUNINGS[index])
 		_detector_node.init_detector()
+	_rebuild_dataset_playlist()
 
 func _on_threshold_changed(val: float) -> void:
 	_thresh_label.text = "%.0f dB" % val
 	if _audio_effect:
 		_audio_effect.threshold_db = val
 
-# ─── note display ────────────────────────────────────────────────────────────
+func _rebuild_dataset_playlist() -> void:
+	if _dataset_single_file:
+		_dataset_files = [_dataset_single_path]
+		_dataset_index = 0
+		return
+	if _dataset_all_files.is_empty():
+		return
+
+	var selected_tuning: String = String(TUNINGS[_tuning_opt.selected])
+	var wanted_keys: PackedStringArray = _preferred_dataset_keys_for_tuning(selected_tuning)
+	var filtered: PackedStringArray = []
+	for path in _dataset_all_files:
+		var key_class: String = _key_class_from_filename(path.get_file())
+		if wanted_keys.has(key_class):
+			filtered.append(path)
+	if filtered.is_empty():
+		filtered = _dataset_all_files
+
+	_dataset_files = filtered
+	_dataset_index = 0
+
+	if _dataset_player and _dataset_files.size() > 0:
+		var stream: AudioStreamWAV = _load_wav(_dataset_files[0])
+		if stream:
+			_dataset_player.stream = stream
+			if _dataset_monitor_player:
+				_dataset_monitor_player.stream = stream
+			_dataset_player.play()
+			if _dataset_monitor_player:
+				_dataset_monitor_player.play()
+
+func _preferred_dataset_keys_for_tuning(tuning: String) -> PackedStringArray:
+	match tuning:
+		"Standard":
+			return ["E"]
+		"DropD":
+			return ["D"]
+		"OpenD":
+			return ["D", "F#", "A"]
+		"DropC":
+			return ["C", "D#", "F", "G", "A"]
+		_:
+			return []
+
+func _key_class_from_filename(file_name: String) -> String:
+	var parts: PackedStringArray = file_name.split("-")
+	if parts.size() < 3:
+		return ""
+	var note_part: String = String(parts[2]).split("_")[0]
+	if note_part.ends_with("m"):
+		note_part = note_part.left(note_part.length() - 1)
+	return _normalize_note_class(note_part)
+
+func _normalize_note_class(note: String) -> String:
+	match note:
+		"Cb":
+			return "B"
+		"Db":
+			return "C#"
+		"Eb":
+			return "D#"
+		"Fb":
+			return "E"
+		"Gb":
+			return "F#"
+		"Ab":
+			return "G#"
+		"Bb":
+			return "A#"
+		"E#":
+			return "F"
+		"B#":
+			return "C"
+		_:
+			return note
+
 func _on_notes_detected(notes: Array) -> void:
-	# notes is an Array of Dictionary (from poll_notes / notes_detected signal)
 	for item in notes:
-		var band : int   = item.get("band", -1)
+		var band: int = item.get("band", -1)
 		if band < 0 or band >= _band_labels.size():
 			continue
-		var row   : Array = _band_labels[band]
-		var freq  : float = item.get("frequency", 0.0)
-		var note  : String = item.get("note", "")
-		var cents : float = item.get("cents", 0.0)
-		var conf  : float = item.get("periodicity", 0.0)
+		var row: Array = _band_labels[band]
+		var freq: float = item.get("frequency", 0.0)
+		var note: String = item.get("note", "")
+		var cents: float = item.get("cents", 0.0)
+		var conf: float = item.get("periodicity", 0.0)
 
 		row[1].text = "%.1f Hz" % freq if freq > 0.0 else "—"
 		row[2].text = note if note != "" else "—"
 		row[3].text = "%.1f ¢" % cents if note != "" else "—"
 		row[4].text = "%.0f%%" % (conf * 100.0)
-		# Colour the note label: green if confident, grey otherwise
 		row[2].modulate = Color.GREEN if conf >= 0.8 else Color(0.6, 0.6, 0.6)
 
-# ─── UI builder ──────────────────────────────────────────────────────────────
 func _build_string_labels() -> void:
-	# Header row
 	for h in ["String", "Frequency", "Note", "Cents", "Conf."]:
 		var lbl := Label.new()
 		lbl.text = h
@@ -117,10 +270,9 @@ func _build_string_labels() -> void:
 		lbl.modulate = Color(0.8, 0.8, 1.0)
 		_strings_grid.add_child(lbl)
 
-	# 6 data rows
 	var string_labels := ["6 (Low)", "5", "4", "3", "2", "1 (High)"]
 	for i in 6:
-		var row : Array = []
+		var row: Array = []
 		for col in 5:
 			var lbl := Label.new()
 			lbl.custom_minimum_size = Vector2(100, 0)
