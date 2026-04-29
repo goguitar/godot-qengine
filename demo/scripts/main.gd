@@ -3,7 +3,7 @@
 extends Control
 
 # ─── tuning options ──────────────────────────────────────────────────────────
-const TUNINGS := ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
+const TUNINGS: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
 
 # ─── node refs ──────────────────────────────────────────────────────────────
 @onready var _tuning_opt    : OptionButton = $VBox/TuningHBox/TuningOption
@@ -11,13 +11,13 @@ const TUNINGS := ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
 @onready var _thresh_label  : Label        = $VBox/ThresholdHBox/ThresholdValue
 @onready var _strings_grid  : GridContainer = $VBox/StringsGrid
 @onready var _status_bar    : Label        = $VBox/StatusBar
-@onready var _detector_node               = $QEngineDetectorNode
+@onready var _detector_node: QEngineDetectorNode = $QEngineDetectorNode
 
 # Per-band UI labels: [string_lbl, freq_lbl, note_lbl, cents_lbl, conf_lbl]
 var _band_labels : Array = []
 
 # ─── AudioEffect reference on the Master bus ────────────────────────────────
-var _audio_effect : Object = null   # AudioEffectQEngine (or null)
+var _audio_effect: AudioEffectQEngine = null
 
 # ─── _ready ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -33,37 +33,59 @@ func _ready() -> void:
 	# Build per-band label rows
 	_build_string_labels()
 
-	# Grab the AudioEffectQEngine from the Master bus (index 0, effect 0)
-	var bus_idx := AudioServer.get_bus_index("Master")
-	if bus_idx >= 0 and AudioServer.get_bus_effect_count(bus_idx) > 0:
-		_audio_effect = AudioServer.get_bus_effect(bus_idx, 0)
-		_status_bar.text = "Status: AudioEffectQEngine found on Master bus"
-	else:
-		_status_bar.text = "Status: no AudioEffectQEngine on Master bus – using QEngineDetectorNode"
+	# Ensure AudioEffectQEngine is present on the Master bus.
+	_ensure_audio_effect_on_master_bus()
 
 	# Connect detector node signal (fallback path)
 	if _detector_node and _detector_node.has_signal("notes_detected"):
 		_detector_node.connect("notes_detected", _on_notes_detected)
 
+func _ensure_audio_effect_on_master_bus() -> void:
+	var bus_idx := AudioServer.get_bus_index("Master")
+	if bus_idx < 0:
+		_status_bar.text = "Status: Master bus not found – using QEngineDetectorNode"
+		return
+
+	for i in AudioServer.get_bus_effect_count(bus_idx):
+		var fx := AudioServer.get_bus_effect(bus_idx, i)
+		if fx is AudioEffectQEngine:
+			_audio_effect = fx
+			_status_bar.text = "Status: AudioEffectQEngine found on Master bus"
+			return
+		if fx and fx.has_method("poll_notes"):
+			_audio_effect = fx
+			_status_bar.text = "Status: AudioEffectQEngine found on Master bus"
+			return
+
+	var new_fx := ClassDB.instantiate("AudioEffectQEngine") as AudioEffectQEngine
+	if new_fx == null:
+		_status_bar.text = "Status: could not instantiate AudioEffectQEngine – using QEngineDetectorNode"
+		return
+
+	new_fx.tuning = TUNINGS[_tuning_opt.selected]
+	new_fx.threshold_db = _thresh_slider.value
+	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
+	_audio_effect = new_fx
+	_status_bar.text = "Status: AudioEffectQEngine added to Master bus"
+
 # ─── _process ───────────────────────────────────────────────────────────────
 func _process(_delta: float) -> void:
 	# Preferred path: poll the AudioEffectQEngine directly if available
-	if _audio_effect and _audio_effect.has_method("poll_notes"):
-		_on_notes_detected(_audio_effect.call("poll_notes"))
+	if _audio_effect:
+		_on_notes_detected(_audio_effect.poll_notes())
 
 # ─── UI callbacks ────────────────────────────────────────────────────────────
 func _on_tuning_changed(index: int) -> void:
-	var t := TUNINGS[index]
 	if _audio_effect:
-		_audio_effect.set("tuning", t)
+		_audio_effect.tuning = String(TUNINGS[index])
 	if _detector_node:
-		_detector_node.set("tuning", t)
-		_detector_node.call("init_detector")
+		_detector_node.tuning = String(TUNINGS[index])
+		_detector_node.init_detector()
 
 func _on_threshold_changed(val: float) -> void:
 	_thresh_label.text = "%.0f dB" % val
 	if _audio_effect:
-		_audio_effect.set("threshold_db", val)
+		_audio_effect.threshold_db = val
 
 # ─── note display ────────────────────────────────────────────────────────────
 func _on_notes_detected(notes: Array) -> void:
@@ -91,7 +113,7 @@ func _build_string_labels() -> void:
 	for h in ["String", "Frequency", "Note", "Cents", "Conf."]:
 		var lbl := Label.new()
 		lbl.text = h
-		lbl.theme_override_font_sizes["font_size"] = 13
+		lbl.add_theme_font_size_override("font_size", 13)
 		lbl.modulate = Color(0.8, 0.8, 1.0)
 		_strings_grid.add_child(lbl)
 
@@ -102,7 +124,7 @@ func _build_string_labels() -> void:
 		for col in 5:
 			var lbl := Label.new()
 			lbl.custom_minimum_size = Vector2(100, 0)
-			lbl.theme_override_font_sizes["font_size"] = 14
+			lbl.add_theme_font_size_override("font_size", 14)
 			if col == 0:
 				lbl.text = string_labels[i]
 			else:

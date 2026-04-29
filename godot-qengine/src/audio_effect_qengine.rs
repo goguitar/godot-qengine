@@ -1,218 +1,129 @@
-//! `AudioEffectQEngine` and `AudioEffectInstanceQEngine` – Godot 4.5
-//! GDExtension classes that plug into the Godot audio bus and expose
-//! per-string guitar pitch detection powered by the cycfi/Q library.
-//!
-//! # Audio-thread safety
-//!
-//! Godot calls `_process_rawptr` on the **audio thread**.  Rust's ownership
-//! rules and the `rtrb` SPSC ring buffer ensure that:
-//!
-//! - The `rtrb::Producer<f32>` lives exclusively in `AudioEffectInstanceQEngine`
-//!   and is touched only from the audio thread.
-//! - The `rtrb::Consumer<f32>` and `GuitarDetector` live in
-//!   `AudioEffectQEngine` and are touched only from the main thread.
-//! - No mutex is held on the audio-thread hot path.
+//! `AudioEffectQEngine` – custom Godot AudioEffect based on
+//! `AudioEffectCapture` for safe runtime capture + pitch detection.
 
-use std::ffi::c_void;
-use std::sync::{Arc, Mutex};
-
-use godot::classes::native::AudioFrame;
-use godot::classes::{AudioEffect, AudioEffectInstance, IAudioEffect, IAudioEffectInstance};
-use godot::meta::conv::RawPtr;
+use godot::classes::AudioEffectCapture;
 use godot::prelude::*;
 use rtrb::Producer;
 
-use qengine_core::ring_buffer::{DEFAULT_CAPACITY};
+use qengine_core::ring_buffer::DEFAULT_CAPACITY;
 use qengine_core::tuning::TuningId;
 use qengine_core::{BandDetector, DetectionResult};
 
-/* -------------------------------------------------------------------------
- * Transfer cell for the SPSC producer
- * ---------------------------------------------------------------------- */
-
-type ProducerSlot = Arc<Mutex<Option<Producer<f32>>>>;
-
-/* =========================================================================
- * AudioEffectQEngine  (extends AudioEffect / Resource)
- * ====================================================================== */
-
-/// Godot AudioEffect resource.
-///
-/// Add this to an audio bus in the Godot inspector, then call
-/// [`AudioEffectQEngine::poll_notes`] each frame from GDScript.
 #[derive(GodotClass)]
-#[class(base = AudioEffect)]
+#[class(base = AudioEffectCapture, init)]
 pub struct AudioEffectQEngine {
+    #[init(val = 44100.0)]
     #[export]
     sample_rate: f64,
+    #[init(val = -45.0)]
     #[export]
     threshold_db: f64,
+    #[init(val = GString::from("Standard"))]
     #[export]
     tuning: GString,
+    #[init(val = 0.8)]
+    #[export]
+    min_periodicity: f64,
 
-    detector:      Option<BandDetector>,
-    producer_slot: Option<ProducerSlot>,
+    detector: Option<BandDetector>,
+    producer: Option<Producer<f32>>,
+    cfg_sample_rate: f64,
+    cfg_threshold_db: f64,
+    cfg_tuning: GString,
+    cfg_min_periodicity: f64,
 
-    base: Base<AudioEffect>,
-}
-
-#[godot_api]
-impl IAudioEffect for AudioEffectQEngine {
-    fn init(base: Base<AudioEffect>) -> Self {
-        AudioEffectQEngine {
-            sample_rate:   44100.0,
-            threshold_db:  -45.0,
-            tuning:        "Standard".into(),
-            detector:      None,
-            producer_slot: None,
-            base,
-        }
-    }
-
-    fn instantiate(&mut self) -> Option<Gd<AudioEffectInstance>> {
-        let tuning_id = TuningId::from_str(self.tuning.to_string().as_str())
-            .unwrap_or(TuningId::Standard);
-
-        let (det, producer) = BandDetector::with_config(
-            self.sample_rate as f32,
-            tuning_id,
-            DEFAULT_CAPACITY,
-            self.threshold_db as f32,
-        );
-
-        let slot: ProducerSlot = Arc::new(Mutex::new(Some(producer)));
-        self.detector      = Some(det);
-        self.producer_slot = Some(Arc::clone(&slot));
-
-        let instance = AudioEffectInstanceQEngine::new_instance(slot);
-        Some(instance.upcast())
-    }
+    base: Base<AudioEffectCapture>,
 }
 
 #[godot_api]
 impl AudioEffectQEngine {
-    /// Drain buffered audio samples, run Q pitch detection, and return an
-    /// `Array` of `Dictionary` objects (one per guitar string band).
-    ///
-    /// Dictionary keys:
-    /// - `"band"` : `int`
-    /// - `"string"` : `String`   (e.g. `"E2"`)
-    /// - `"frequency"` : `float` (Hz, 0 if not detected)
-    /// - `"periodicity"` : `float` (Q confidence, 0–1)
-    /// - `"note"` : `String`     (e.g. `"E2"`, `""` if none)
-    /// - `"cents"` : `float`     (deviation from equal temperament)
     #[func]
     pub fn poll_notes(&mut self) -> Array<Variant> {
+        self.ensure_detector();
+
+        let available = self.base().get_frames_available();
+        if available > 0 {
+            let frames = self.base().get_buffer(available);
+            if let Some(ref mut prod) = self.producer {
+                for frame in frames.as_slice() {
+                    let mono = (frame.x + frame.y) * 0.5;
+                    let _ = prod.push(mono);
+                }
+            }
+        }
+
         let Some(ref mut det) = self.detector else {
             return Array::new();
         };
-        detection_results_to_array(det.process())
+
+        let min_p = self.min_periodicity as f32;
+        let results: Vec<DetectionResult> = det.process();
+        let filtered: Vec<DetectionResult> = results
+            .into_iter()
+            .filter(|r| r.raw_freq > 0.0 && r.periodicity >= min_p)
+            .collect();
+
+        detection_results_to_array(filtered)
     }
 
-    /// Reset all Q detectors and flush the ring buffer.
     #[func]
     pub fn reset(&mut self) {
         if let Some(ref mut det) = self.detector {
             det.reset();
         }
+        self.base_mut().clear_buffer();
     }
 }
 
-/* =========================================================================
- * AudioEffectInstanceQEngine  (extends AudioEffectInstance)
- * ====================================================================== */
+impl AudioEffectQEngine {
+    fn ensure_detector(&mut self) {
+        let needs_rebuild = self.detector.is_none()
+            || self.cfg_sample_rate != self.sample_rate
+            || self.cfg_threshold_db != self.threshold_db
+            || self.cfg_min_periodicity != self.min_periodicity
+            || self.cfg_tuning != self.tuning;
 
-/// Per-instance audio processor created by [`AudioEffectQEngine::instantiate`].
-#[derive(GodotClass)]
-#[class(base = AudioEffectInstance)]
-pub struct AudioEffectInstanceQEngine {
-    producer: Option<Producer<f32>>,
-    slot:     ProducerSlot,
-    base:     Base<AudioEffectInstance>,
-}
+        if !needs_rebuild {
+            return;
+        }
 
-impl AudioEffectInstanceQEngine {
-    pub fn new_instance(slot: ProducerSlot) -> Gd<Self> {
-        Gd::from_init_fn(|base| AudioEffectInstanceQEngine {
-            producer: None,
-            slot,
-            base,
-        })
+        let tuning_id = TuningId::from_str(self.tuning.to_string().as_str())
+            .unwrap_or(TuningId::Standard);
+
+        let (mut det, prod) = BandDetector::with_config(
+            self.sample_rate as f32,
+            tuning_id,
+            DEFAULT_CAPACITY,
+            self.threshold_db as f32,
+        );
+        det.set_min_periodicity(self.min_periodicity as f32);
+
+        self.detector = Some(det);
+        self.producer = Some(prod);
+        self.cfg_sample_rate = self.sample_rate;
+        self.cfg_threshold_db = self.threshold_db;
+        self.cfg_tuning = self.tuning.clone();
+        self.cfg_min_periodicity = self.min_periodicity;
+        self.base_mut().clear_buffer();
     }
 }
-
-#[godot_api]
-impl IAudioEffectInstance for AudioEffectInstanceQEngine {
-    fn init(base: Base<AudioEffectInstance>) -> Self {
-        AudioEffectInstanceQEngine {
-            producer: None,
-            slot:     Arc::new(Mutex::new(None)),
-            base,
-        }
-    }
-
-    /// Called by Godot's audio thread for every audio block.
-    ///
-    /// # Safety
-    /// `src_buffer` is valid for `frame_count` consecutive `AudioFrame` values.
-    unsafe fn process_rawptr(
-        &mut self,
-        src_buffer: RawPtr<*const c_void>,
-        dst_buffer: RawPtr<*mut AudioFrame>,
-        frame_count: i32,
-    ) {
-        let count = frame_count as usize;
-        let src = src_buffer.ptr() as *const AudioFrame;
-        let dst = dst_buffer.ptr();
-
-        // One-time: take the producer out of the transfer slot (lock-free
-        // after this first acquisition).
-        if self.producer.is_none() {
-            if let Ok(mut guard) = self.slot.try_lock() {
-                self.producer = guard.take();
-            }
-        }
-
-        // Push mono-mixed samples (lock-free SPSC).
-        if let Some(ref mut prod) = self.producer {
-            for i in 0..count {
-                let frame = unsafe { (*src.add(i)).clone() };
-                let mono  = (frame.left + frame.right) * 0.5;
-                let _     = prod.push(mono);
-            }
-        }
-
-        // Pass audio through unchanged (capture-only effect).
-        unsafe {
-            std::ptr::copy_nonoverlapping(src, dst, count);
-        }
-    }
-
-    fn process_silence(&self) -> bool {
-        true
-    }
-}
-
-/* =========================================================================
- * Shared helper
- * ====================================================================== */
 
 pub(crate) fn detection_results_to_array(results: Vec<DetectionResult>) -> Array<Variant> {
     let mut out: Array<Variant> = Array::new();
     for r in results {
         let mut d: VarDictionary = Dictionary::new();
-        d.set("band",        r.band as i64);
+        d.set("band", r.band as i64);
         let string_label = GString::from(&r.string_label);
-        d.set("string",      &string_label);
-        d.set("frequency",   r.raw_freq as f64);
+        d.set("string", &string_label);
+        d.set("frequency", r.raw_freq as f64);
         d.set("periodicity", r.periodicity as f64);
         if let Some(ref note) = r.note {
             let note_str = GString::from(note.display().as_str());
-            d.set("note",  &note_str);
+            d.set("note", &note_str);
             d.set("cents", note.cents as f64);
         } else {
             let empty = GString::new();
-            d.set("note",  &empty);
+            d.set("note", &empty);
             d.set("cents", 0.0f64);
         }
         out.push(&d.to_variant());

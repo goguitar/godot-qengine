@@ -12,7 +12,7 @@ repository.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-godot         = "0.5"
+godot         = { version = "0.5.2", features = ["api-4-5", "experimental-threads", "__codegen-full"] }
 qengine-core  = { path = "../qengine-core" }
 qengine-sys   = { path = "../qengine-sys" }
 rtrb          = "0.3"

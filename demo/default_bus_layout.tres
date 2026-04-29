@@ -1,6 +1,7 @@
 [gd_resource type="AudioBusLayout" load_steps=3 format=3 uid="uid://b1qengine01"]
 
 [sub_resource type="AudioEffectQEngine" id="AudioEffectQEngine_1"]
+resource_name = "QEngine"
 sample_rate = 44100.0
 threshold_db = -45.0
 tuning = "Standard"

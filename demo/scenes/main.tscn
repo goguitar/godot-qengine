@@ -63,5 +63,5 @@ text = "Status: idle — add a microphone AudioStreamMicrophone to an AudioStrea
 theme_override_font_sizes/font_size = 12
 autowrap_mode = 3
 
-[node name="QEngineDetectorNode" type="Node" parent="."]
+[node name="QEngineDetectorNode" type="QEngineDetectorNode" parent="."]
 script = ExtResource("2_detector")

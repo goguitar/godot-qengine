@@ -8,10 +8,10 @@
 ##
 ## Expected notes (E Standard): E2 A2 D3 G3 B3 E4
 
-extends Node
+extends QEngineDetectorNode
 
 # Note frequencies for E Standard (open strings)
-const STANDARD_FREQS := [82.41, 110.00, 146.83, 196.00, 246.94, 329.63]
+const STANDARD_FREQS: PackedFloat32Array = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63]
 
 const SAMPLE_RATE    := 44100.0
 const BLOCK_SECONDS  := 0.05   # generate 50 ms of audio each frame
@@ -21,16 +21,14 @@ var _play_band  : int   = 0     # which string to synthesise
 var _time_acc   : float = 0.0
 var _note_time  : float = 1.5   # seconds per note cycle
 
-@onready var _detector := $"."  # This script IS the QEngineDetectorNode
-
 func _ready() -> void:
 	# This node itself is a QEngineDetectorNode (custom Rust class).
 	# Properties are set via Godot inspector or here:
-	_detector.set("tuning", "Standard")
-	_detector.set("sample_rate", SAMPLE_RATE)
-	_detector.set("threshold_db", -45.0)
-	_detector.set("auto_poll", false)   # we will poll manually
-	_detector.call("init_detector")
+	set("tuning", "Standard")
+	set("sample_rate", SAMPLE_RATE)
+	set("threshold_db", -45.0)
+	set("auto_poll", false)   # we will poll manually
+	call("init_detector")
 
 func _process(delta: float) -> void:
 	# Cycle through each open-string frequency every _note_time seconds
@@ -40,7 +38,7 @@ func _process(delta: float) -> void:
 		_play_band = (_play_band + 1) % 6
 
 	# Generate one block of a pure sine wave at the current string frequency
-	var freq  := STANDARD_FREQS[_play_band]
+	var freq: float = STANDARD_FREQS[_play_band]
 	var n     := int(SAMPLE_RATE * BLOCK_SECONDS)
 	var buf   := PackedFloat32Array()
 	buf.resize(n)
@@ -49,5 +47,5 @@ func _process(delta: float) -> void:
 	_phase = fmod(_phase + n, SAMPLE_RATE / freq)
 
 	# Push samples and poll
-	_detector.call("push_samples", buf)
-	_detector.call("poll_notes")   # triggers notes_detected signal
+	call("push_samples", buf)
+	call("poll_notes")   # triggers notes_detected signal

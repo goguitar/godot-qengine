@@ -10,7 +10,7 @@ use godot::prelude::*;
 mod audio_effect_qengine;
 mod note_detector_node;
 
-pub use audio_effect_qengine::{AudioEffectInstanceQEngine, AudioEffectQEngine};
+pub use audio_effect_qengine::AudioEffectQEngine;
 pub use note_detector_node::QEngineDetectorNode;
 
 struct GodotQEngineExtension;
