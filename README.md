@@ -1,9 +1,9 @@
 # godot-qengine
 
-A **Godot 4.5 GDExtension** written in Rust that adds real-time guitar/bass
-pitch detection to any Godot 4.5 project.  
+A **Godot 4.4+ GDExtension** written in C++ that adds real-time guitar/bass
+pitch detection to any Godot project.  
 Detection is powered by the [**cycfi/Q**](https://github.com/cycfi/q)
-C++ library, accessed from Rust via a thin C FFI bridge.
+C++ library, accessed directly (no FFI bridge required).
 
 ---
 
@@ -11,29 +11,31 @@ C++ library, accessed from Rust via a thin C FFI bridge.
 
 ```
 ┌───────────────────────────────────────────────────────┐
-│  Godot audio thread                                    │
-│    AudioEffectInstanceQEngine::process_rawptr()        │
-│      ↓  mono-mixed f32 samples  (lock-free SPSC)       │
+│  Godot audio bus                                       │
+│    AudioEffectQEngine::poll_notes()                    │
+│      drains AudioEffectCapture buffer (stereo→mono)    │
 └───────────────────────────────────────────────────────┘
-                 ↓ rtrb Producer → Consumer ↓
+                  ↓ PackedVector2Array frames ↓
 ┌───────────────────────────────────────────────────────┐
-│  Godot main thread (GDScript _process)                │
-│    AudioEffectQEngine::poll_notes()  ─or─             │
-│    QEngineDetectorNode::poll_notes()                  │
-│      → qengine-core BandDetector                      │
-│        → qengine-sys (C FFI) → cycfi/Q GuitarDetector │
-│           6 bands × pitch_detector                    │
-│      ← Vec<DetectionResult> → Array[Dictionary]       │
+│  BandDetector (C++)                                    │
+│    6 × cycfi::q::pitch_detector (per guitar string)   │
+│    → DetectedNote (frequency / MIDI / cents)          │
 └───────────────────────────────────────────────────────┘
 ```
 
-### Crates
+### Source layout
 
-| Crate | Purpose |
+| Path | Purpose |
 |---|---|
-| `qengine-sys` | Thin `extern "C"` declarations + safe Rust wrappers (`PitchDetector`, `GuitarDetector`) over the compiled C++ bridge |
-| `qengine-core` | Pure-Rust logic: note identification, guitar tunings, SPSC ring buffer helpers, `BandDetector` |
-| `godot-qengine` | Godot 4.5 GDExtension: `AudioEffectQEngine`, `AudioEffectInstanceQEngine`, `QEngineDetectorNode` |
+| `src/note.hpp` | Header-only: `DetectedNote`, frequency↔MIDI helpers |
+| `src/tuning.hpp` | Header-only: `TuningId`, `StringInfo`, `Tuning`, `get_tuning()` |
+| `src/band_detector.hpp/.cpp` | `BandDetector` – drives 6 Q pitch detectors |
+| `src/audio_effect_qengine.hpp/.cpp` | Godot `AudioEffectQEngine` (extends `AudioEffectCapture`) |
+| `src/detector_node.hpp/.cpp` | Godot `QEngineDetectorNode` (extends `Node`) |
+| `src/register_types.cpp` | GDExtension entry point (`godot_qengine_init`) |
+| `tests/test_pitch_detection.cpp` | Standalone C++ tests (no Godot required) |
+| `third_party/q` | cycfi/Q (git submodule) |
+| `third_party/infra` | cycfi/infra (git submodule) |
 
 ---
 
@@ -53,9 +55,10 @@ C++ library, accessed from Rust via a thin C FFI bridge.
 
 | Requirement | Version |
 |---|---|
-| Rust toolchain | 1.75+ (`edition = "2021"`) |
-| C++ compiler | GCC 12+ or Clang 16+ (C++20 required by cycfi/Q) |
-| Godot | 4.5+ |
+| C++ compiler | GCC 12+, Clang 16+, or MSVC 2022+ (C++20 required) |
+| CMake | 3.22+ |
+| Godot | 4.4+ |
+| git | for submodule checkout |
 
 ---
 
@@ -77,19 +80,24 @@ git submodule update --init --recursive
 ### 2. Build the GDExtension
 
 ```bash
-# Debug (fast rebuild)
-cargo build -p godot-qengine
+# Configure (downloads godot-cpp automatically via FetchContent)
+cmake -B build -DCMAKE_BUILD_TYPE=Release
 
-# Release (optimised – use for distribution)
-cargo build -p godot-qengine --release
+# Build the shared library
+cmake --build build --target godot_qengine --config Release
 ```
 
-The compiled library lands in `target/debug/` or `target/release/` and is
-referenced by the `.gdextension` file in `demo/`.
+The compiled library lands in `build/`:
+
+| Platform | File |
+|---|---|
+| Linux | `build/libgodot_qengine.so` |
+| macOS | `build/libgodot_qengine.dylib` |
+| Windows | `build/godot_qengine.dll` (or `build/Release/`) |
 
 ### 3. Run the demo
 
-Open `demo/` as a Godot 4.5 project.  The demo synthesises each open string
+Open `demo/` as a Godot 4.4+ project.  The demo synthesises each open string
 of E Standard tuning and displays the detected note + cents deviation.
 
 ---
@@ -101,7 +109,7 @@ of E Standard tuning and displays the detected note + cents deviation.
 1. Copy `demo/godot-qengine.gdextension` to your project root and adjust the
    library paths.
 2. In the Godot Audio panel, add **AudioEffectQEngine** to any bus.
-3. In GDScript, poll every frame:
+3. Poll every frame from GDScript:
 
 ```gdscript
 @onready var fx := AudioServer.get_bus_effect(
@@ -147,21 +155,18 @@ func _on_notes(notes: Array):
 
 ## Running the tests
 
+Tests are standalone C++ executables and do **not** require Godot:
+
 ```bash
-# Unit + integration tests (no Godot required)
-cargo test -p qengine-sys -p qengine-core
-
-# Dataset tests (requires GuitarSet audio/mic files)
-QENGINE_DATASET_DIR=/path/to/guitarset/audio/mic \
-    cargo test -p qengine-core --features dataset_tests -- --ignored
+# Build and run (after cmake -B build above)
+cmake --build build --target qengine_tests
+ctest --test-dir build --output-on-failure
 ```
-
-The GuitarSet dataset is available at  
-<https://github.com/santzit/guitar-pitch-detection-/tree/main/tests/dataset/guitarset/audio/mic>
 
 ---
 
 ## License
 
 MIT – see [LICENSE](LICENSE).  
-cycfi/Q and cycfi/infra are also MIT licensed.
+cycfi/Q and cycfi/infra are also MIT licensed.  
+godot-cpp is MIT licensed.

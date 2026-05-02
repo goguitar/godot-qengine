@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ── Test (Linux only – no Godot needed) ─────────────────────────────────────
   test:
     name: Test (Linux)
     runs-on: ubuntu-latest
@@ -18,15 +19,23 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Cache CMake / FetchContent
+        uses: actions/cache@v4
+        with:
+          path: ~/.cmake
+          key: cmake-fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: cmake-fetchcontent-${{ runner.os }}-
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build test executable
+        run: cmake --build build --target qengine_tests --config Release
 
       - name: Run tests
-        run: cargo test -p qengine-sys -p qengine-core
+        run: ctest --test-dir build --output-on-failure
 
+  # ── Per-platform library builds ──────────────────────────────────────────────
   build-libs:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
@@ -54,20 +63,30 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Cache CMake / FetchContent
+        uses: actions/cache@v4
+        with:
+          path: ~/.cmake
+          key: cmake-fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: cmake-fetchcontent-${{ runner.os }}-
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build release library
-        run: cargo build --release -p godot-qengine
+        run: cmake --build build --target godot_qengine --config Release
 
       - name: Prepare platform artifact
         shell: bash
         run: |
           mkdir -p dist
-          cp "target/release/${{ matrix.lib_name }}" "dist/${{ matrix.lib_name }}"
+          # MSVC places output in build/Release/; single-config generators put
+          # it directly in build/.
+          if [ -f "build/Release/${{ matrix.lib_name }}" ]; then
+            cp "build/Release/${{ matrix.lib_name }}" "dist/${{ matrix.lib_name }}"
+          else
+            cp "build/${{ matrix.lib_name }}" "dist/${{ matrix.lib_name }}"
+          fi
 
       - name: Upload platform artifact
         uses: actions/upload-artifact@v4
@@ -75,6 +94,7 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: dist/
 
+  # ── Package addon zip ────────────────────────────────────────────────────────
   package-addon:
     name: Package addon zip
     runs-on: ubuntu-latest
@@ -95,24 +115,28 @@ jobs:
         shell: bash
         run: |
           mkdir -p package/addons/qengine/bin
-          cp dist/libs/libgodot_qengine.so package/addons/qengine/bin/
-          cp dist/libs/godot_qengine.dll package/addons/qengine/bin/
+          cp dist/libs/libgodot_qengine.so   package/addons/qengine/bin/
+          cp dist/libs/godot_qengine.dll      package/addons/qengine/bin/
           cp dist/libs/libgodot_qengine.dylib package/addons/qengine/bin/
           cp demo/addons/qengine/icon_detector.svg package/addons/qengine/
-          cp demo/addons/qengine/icon_qengine.svg package/addons/qengine/
+          cp demo/addons/qengine/icon_qengine.svg  package/addons/qengine/
 
           cat > package/addons/qengine/godot-qengine.gdextension <<'EOF'
           [configuration]
-          entry_symbol = "gdext_rust_init"
-          compatibility_minimum = "4.5"
+          entry_symbol = "godot_qengine_init"
+          compatibility_minimum = "4.4"
 
           [libraries]
-          linux.debug.x86_64 = "res://addons/qengine/bin/libgodot_qengine.so"
-          linux.release.x86_64 = "res://addons/qengine/bin/libgodot_qengine.so"
-          windows.debug.x86_64 = "res://addons/qengine/bin/godot_qengine.dll"
+          linux.debug.x86_64     = "res://addons/qengine/bin/libgodot_qengine.so"
+          linux.release.x86_64   = "res://addons/qengine/bin/libgodot_qengine.so"
+          windows.debug.x86_64   = "res://addons/qengine/bin/godot_qengine.dll"
           windows.release.x86_64 = "res://addons/qengine/bin/godot_qengine.dll"
-          macos.debug = "res://addons/qengine/bin/libgodot_qengine.dylib"
-          macos.release = "res://addons/qengine/bin/libgodot_qengine.dylib"
+          macos.debug            = "res://addons/qengine/bin/libgodot_qengine.dylib"
+          macos.release          = "res://addons/qengine/bin/libgodot_qengine.dylib"
+
+          [icons]
+          AudioEffectQEngine  = "res://addons/qengine/icon_qengine.svg"
+          QEngineDetectorNode = "res://addons/qengine/icon_detector.svg"
           EOF
 
           cp README.md package/addons/qengine/README.md
@@ -129,6 +153,7 @@ jobs:
           name: godot-qengine-addon
           path: godot-qengine.zip
 
+  # ── Publish to GitHub Release on v* tags ─────────────────────────────────────
   publish-release:
     name: Publish release asset
     runs-on: ubuntu-latest
