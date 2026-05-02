@@ -23,7 +23,7 @@ func _init() -> void:
 
 	var effect = _get_qengine_effect_on_capture()
 	if effect == null:
-		push_error("QEngine effect not found on Capture bus")
+		push_error("QEngine effect not found on Guitar In bus")
 		quit(1)
 		return
 
@@ -39,7 +39,7 @@ func _init() -> void:
 
 	var root: Window = get_root()
 	var player := AudioStreamPlayer.new()
-	player.bus = "Capture"
+	player.bus = "Guitar In"
 	root.add_child(player)
 
 	var tested: int = 0
@@ -90,7 +90,7 @@ func _init() -> void:
 	quit(0 if tested > 0 and passed == tested else 1)
 
 func _get_qengine_effect_on_capture():
-	var bus_idx: int = AudioServer.get_bus_index("Capture")
+	var bus_idx: int = AudioServer.get_bus_index("Guitar In")
 	if bus_idx < 0:
 		return null
 	for i in AudioServer.get_bus_effect_count(bus_idx):

@@ -8,7 +8,7 @@
 ##
 ## Expected notes (E Standard): E2 A2 D3 G3 B3 E4
 
-extends QEngineDetectorNode
+extends Node
 
 # Note frequencies for E Standard (open strings) – used for synthesis.
 const STANDARD_FREQS: PackedFloat32Array = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63]

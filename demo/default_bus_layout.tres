@@ -4,7 +4,7 @@
 resource_name = "QEngine"
 
 [resource]
-bus/1/name = &"Capture"
+bus/1/name = &"Guitar In"
 bus/1/solo = false
 bus/1/mute = false
 bus/1/bypass_fx = false

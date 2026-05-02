@@ -1,7 +1,9 @@
-[gd_scene load_steps=3 format=3 uid="uid://qengine_main"]
+[gd_scene load_steps=4 format=3 uid="uid://qengine_main"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/guitar_detector.gd" id="2_detector"]
+
+[sub_resource type="AudioStreamMicrophone" id="AudioStreamMicrophone_1"]
 
 [node name="Main" type="Control"]
 anchor_right = 1.0
@@ -59,9 +61,14 @@ theme_override_constants/h_separation = 16
 theme_override_constants/v_separation = 8
 
 [node name="StatusBar" type="Label" parent="VBox"]
-text = "Status: idle — add a microphone AudioStreamMicrophone to an AudioStreamPlayer and route to Capture bus"
+text = "Status: idle — plug in a guitar/mic; audio routes to Guitar In bus via AudioStreamMicrophone"
 theme_override_font_sizes/font_size = 12
 autowrap_mode = 3
+
+[node name="GuitarInPlayer" type="AudioStreamPlayer" parent="."]
+stream = SubResource("AudioStreamMicrophone_1")
+bus = &"Guitar In"
+autoplay = true
 
 [node name="QEngineDetectorNode" type="QEngineDetectorNode" parent="."]
 script = ExtResource("2_detector")

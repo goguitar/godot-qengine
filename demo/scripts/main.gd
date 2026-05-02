@@ -109,20 +109,20 @@ func _ready() -> void:
 	_setup_dataset_playback()
 
 	if _audio_effect == null and _detector_node and _detector_node.has_signal("notes_detected"):
-		_detector_node.band_ranges = TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]]
+		_detector_node.set("band_ranges", TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]])
 		_detector_node.connect("notes_detected", _on_notes_detected)
 
 func _ensure_audio_effect_on_capture_bus() -> void:
-	var bus_idx := AudioServer.get_bus_index("Capture")
+	var bus_idx := AudioServer.get_bus_index("Guitar In")
 	if bus_idx < 0:
-		_status_bar.text = "Status: Capture bus not found – using QEngineDetectorNode"
+		_status_bar.text = "Status: Guitar In bus not found – using QEngineDetectorNode"
 		return
 
 	for i in AudioServer.get_bus_effect_count(bus_idx):
 		var fx := AudioServer.get_bus_effect(bus_idx, i)
 		if fx and fx.has_method("poll_notes"):
 			_audio_effect = fx
-			_status_bar.text = "Status: AudioEffectQEngine found on Capture bus"
+			_status_bar.text = "Status: AudioEffectQEngine found on Guitar In bus"
 			return
 
 	var new_fx: AudioEffect = ClassDB.instantiate("AudioEffectQEngine") as AudioEffect
@@ -134,7 +134,7 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 	new_fx.set("threshold_db", _thresh_slider.value)
 	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
 	_audio_effect = new_fx
-	_status_bar.text = "Status: AudioEffectQEngine added to Capture bus"
+	_status_bar.text = "Status: AudioEffectQEngine added to Guitar In bus"
 
 func _setup_dataset_playback() -> void:
 	_dataset_single_file = false
@@ -190,7 +190,7 @@ func _setup_dataset_playback() -> void:
 
 	if _dataset_player == null:
 		_dataset_player = AudioStreamPlayer.new()
-		_dataset_player.bus = "Capture"
+		_dataset_player.bus = "Guitar In"
 		add_child(_dataset_player)
 	if _dataset_monitor_player == null:
 		_dataset_monitor_player = AudioStreamPlayer.new()
@@ -201,7 +201,7 @@ func _setup_dataset_playback() -> void:
 	_dataset_monitor_player.stream = stream
 	_dataset_player.play()
 	_dataset_monitor_player.play()
-	_status_bar.text = "Status: dataset playback [%s] on Capture bus (%s)" % [
+	_status_bar.text = "Status: dataset playback [%s] on Guitar In bus (%s)" % [
 		String(TUNING_NAMES[_tuning_opt.selected]),
 		dataset_file.get_file(),
 	]
@@ -230,9 +230,9 @@ func _on_tuning_changed(index: int) -> void:
 	var tuning_name: String = TUNING_NAMES[index]
 	var ranges: PackedFloat32Array = TUNING_DATA[tuning_name]
 	if _audio_effect:
-		_audio_effect.band_ranges = ranges
+		_audio_effect.set("band_ranges", ranges)
 	if _detector_node:
-		_detector_node.band_ranges = ranges  # auto-triggers init_detector()
+		_detector_node.set("band_ranges", ranges)  # auto-triggers init_detector()
 	_rebuild_dataset_playlist()
 
 func _on_threshold_changed(val: float) -> void:
