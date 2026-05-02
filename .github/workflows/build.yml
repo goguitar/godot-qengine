@@ -28,23 +28,17 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
-  # ── Demo headless test (Linux, no audio hardware required) ──────────────────
-  demo-test:
-    name: Demo headless test (Linux)
-    runs-on: ubuntu-latest
-    needs: test
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-
       - name: Build Linux shared library
         run: cmake --build build --target godot_qengine --config Release
+
+      - name: Prepare library for headless demo test
+        run: |
+          mkdir -p demo/addons/qengine/bin
+          cp build/libgodot_qengine.so demo/addons/qengine/bin/
+          # Patch gdextension to use a project-relative path so Godot 4.4 headless
+          # can find the library (res://../ paths outside the project dir are blocked).
+          sed -i 's|res://../build/libgodot_qengine.so|res://addons/qengine/bin/libgodot_qengine.so|g' \
+              demo/godot-qengine.gdextension
 
       - name: Download Godot 4.4 headless
         run: |
@@ -52,13 +46,13 @@ jobs:
           unzip -q Godot_v4.4-stable_linux.x86_64.zip
           chmod +x Godot_v4.4-stable_linux.x86_64
 
-      - name: Run headless demo CI test
+      - name: Run demo dataset test (headless)
         run: |
           ./Godot_v4.4-stable_linux.x86_64 \
             --headless \
             --path demo/ \
-            --script res://scripts/ci_headless_test.gd \
-            --quit-after 120
+            --script res://scripts/dataset_demo_test.gd \
+            --quit-after 180
 
   # ── Per-platform library builds ──────────────────────────────────────────────
   build-libs:
