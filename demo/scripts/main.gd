@@ -11,7 +11,7 @@ extends Control
 
 const TUNING_NAMES: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
 
-const TUNING_DATA := {
+var TUNING_DATA := {
 	"Standard": PackedFloat32Array([
 		 80.11,  329.64,   # string 6: E2  82.41 Hz
 		106.87,  440.00,   # string 5: A2  110.00 Hz
@@ -83,7 +83,7 @@ const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
 @onready var _thresh_label: Label = $VBox/ThresholdHBox/ThresholdValue
 @onready var _strings_grid: GridContainer = $VBox/StringsGrid
 @onready var _status_bar: Label = $VBox/StatusBar
-@onready var _detector_node: QEngineDetectorNode = $QEngineDetectorNode
+@onready var _detector_node: Node = $QEngineDetectorNode
 
 var _band_labels: Array = []
 
@@ -125,13 +125,13 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 			_status_bar.text = "Status: AudioEffectQEngine found on Capture bus"
 			return
 
-	var new_fx := ClassDB.instantiate("AudioEffectQEngine")
+	var new_fx: AudioEffect = ClassDB.instantiate("AudioEffectQEngine") as AudioEffect
 	if new_fx == null:
 		_status_bar.text = "Status: could not instantiate AudioEffectQEngine – using QEngineDetectorNode"
 		return
 
-	new_fx.band_ranges = TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]]
-	new_fx.threshold_db = _thresh_slider.value
+	new_fx.set("band_ranges", TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]])
+	new_fx.set("threshold_db", _thresh_slider.value)
 	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
 	_audio_effect = new_fx
 	_status_bar.text = "Status: AudioEffectQEngine added to Capture bus"
