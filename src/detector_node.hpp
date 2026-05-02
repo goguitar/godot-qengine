@@ -1,9 +1,13 @@
 // detector_node.hpp – QEngineDetectorNode: a Godot Node for manual audio
-// routing.  Receives PCM frames via push_samples() and emits the
+// routing.  Receives PCM samples via push_samples() and emits the
 // "notes_detected" signal (or returns notes from poll_notes()).
 //
-// Raw Q pitch-detector results (frequency + periodicity) are returned.
-// Note-name mapping and tuning selection live in GDScript.
+// Raw Q pitch-detector results (frequency, periodicity, midi_note, cents) are
+// returned.  Note-name mapping and tuning selection live in GDScript.
+//
+// Band frequency ranges MUST be set from GDScript via:
+//   detector.band_ranges = PackedFloat32Array([min0, max0, …, min5, max5])
+// Setting this property automatically rebuilds the internal detector.
 
 #pragma once
 
@@ -55,8 +59,12 @@ public:
     double get_min_periodicity()  const   { return min_periodicity; }
 
     /// Per-band frequency bounds: 12 floats – [min0, max0, min1, max1, …, min5, max5].
-    void               set_band_ranges(const PackedFloat32Array& v) { band_ranges = v; }
-    PackedFloat32Array get_band_ranges()                    const   { return band_ranges; }
+    /// Setting this from GDScript automatically (re)builds the internal detector.
+    void               set_band_ranges(const PackedFloat32Array& v) {
+        band_ranges = v;
+        init_detector();
+    }
+    PackedFloat32Array get_band_ranges() const { return band_ranges; }
 
     void   set_auto_poll(bool v)          { auto_poll = v; }
     bool   get_auto_poll()        const   { return auto_poll; }

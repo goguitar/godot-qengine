@@ -109,6 +109,7 @@ func _ready() -> void:
 	_setup_dataset_playback()
 
 	if _audio_effect == null and _detector_node and _detector_node.has_signal("notes_detected"):
+		_detector_node.band_ranges = TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]]
 		_detector_node.connect("notes_detected", _on_notes_detected)
 
 func _ensure_audio_effect_on_capture_bus() -> void:
@@ -231,8 +232,7 @@ func _on_tuning_changed(index: int) -> void:
 	if _audio_effect:
 		_audio_effect.band_ranges = ranges
 	if _detector_node:
-		_detector_node.band_ranges = ranges
-		_detector_node.init_detector()
+		_detector_node.band_ranges = ranges  # auto-triggers init_detector()
 	_rebuild_dataset_playlist()
 
 func _on_threshold_changed(val: float) -> void:

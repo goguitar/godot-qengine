@@ -1,8 +1,10 @@
 // audio_effect_qengine.hpp – Godot AudioEffectCapture subclass that feeds
-// captured stereo bus audio into a BandDetector.
+// captured mono bus audio into a BandDetector.
 //
 // Tuning selection and note-name mapping are handled by GDScript via the
 // band_ranges property (12 floats: freq_min0, freq_max0, …, freq_min5, freq_max5).
+// band_ranges MUST be set from GDScript before poll_notes() produces results.
+// The audio input is treated as mono — channel x is used directly.
 
 #pragma once
 

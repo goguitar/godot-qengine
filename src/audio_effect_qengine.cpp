@@ -2,6 +2,8 @@
 //
 // The C++ layer outputs raw Q pitch-detector results (frequency + periodicity).
 // Note-name mapping and tuning selection live in GDScript.
+// Band frequency ranges must be set from GDScript via set_band_ranges() /
+// the band_ranges property before poll_notes() will produce results.
 
 #include "audio_effect_qengine.hpp"
 
@@ -11,20 +13,6 @@
 #include <godot_cpp/variant/vector2.hpp>
 
 namespace godot {
-
-// ─────────────────────────────────────────────────────────────────────────────
-// E Standard default band ranges (half-semitone below open, 2 octaves above)
-// Used when GDScript has not yet set band_ranges.
-// ─────────────────────────────────────────────────────────────────────────────
-
-static constexpr BandRange STANDARD_RANGES[6] = {
-    { 80.11f,  329.64f },  // string 6: E2  (82.41 Hz)
-    { 106.87f, 440.00f },  // string 5: A2  (110.00 Hz)
-    { 142.65f, 587.32f },  // string 4: D3  (146.83 Hz)
-    { 190.42f, 784.00f },  // string 3: G3  (196.00 Hz)
-    { 239.91f, 987.76f },  // string 2: B3  (246.94 Hz)
-    { 320.25f, 1318.52f }, // string 1: E4  (329.63 Hz)
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // _bind_methods
@@ -58,8 +46,22 @@ Array AudioEffectQEngine::poll_notes()
 {
     ensure_detector();
 
-    // Drain the Godot capture buffer, downmix stereo → mono in one batch,
-    // and push the whole block into the SPSC ring at once.
+    // Return 6 silent dicts if band_ranges has not been configured yet.
+    if (!detector) {
+        Array out;
+        out.resize(6);
+        for (int i = 0; i < 6; ++i) {
+            Dictionary d;
+            d["band"] = i; d["frequency"] = 0.0; d["periodicity"] = 0.0;
+            d["midi_note"] = -1; d["cents"] = 0.0;
+            out[i] = d;
+        }
+        return out;
+    }
+
+    // Drain the Godot capture buffer.
+    // AudioEffectCapture on a mono bus delivers the same signal on both
+    // channels; read channel x directly (no downmix needed).
     const int64_t available = get_frames_available();
     if (available > 0) {
         const PackedVector2Array frames = get_buffer(available);
@@ -68,7 +70,7 @@ Array AudioEffectQEngine::poll_notes()
 
         std::vector<float> mono(static_cast<std::size_t>(n));
         for (int64_t i = 0; i < n; ++i)
-            mono[i] = (data[i].x + data[i].y) * 0.5f;
+            mono[i] = data[i].x;
 
         detector->push_samples(mono.data(), mono.size());
     }
@@ -110,15 +112,10 @@ void AudioEffectQEngine::reset()
 
 std::array<BandRange, 6> AudioEffectQEngine::current_ranges() const
 {
-    std::array<BandRange, 6> ranges;
+    std::array<BandRange, 6> ranges{};
     if (band_ranges.size() >= 12) {
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 6; ++i)
             ranges[i] = { band_ranges[i * 2], band_ranges[i * 2 + 1] };
-        }
-    } else {
-        for (int i = 0; i < 6; ++i) {
-            ranges[i] = STANDARD_RANGES[i];
-        }
     }
     return ranges;
 }
@@ -129,6 +126,12 @@ std::array<BandRange, 6> AudioEffectQEngine::current_ranges() const
 
 void AudioEffectQEngine::ensure_detector()
 {
+    // Don't build the detector until GDScript has configured band_ranges.
+    if (band_ranges.size() < 12) {
+        detector.reset();
+        return;
+    }
+
     bool needs_rebuild = !detector
         || cfg_sample_rate     != sample_rate
         || cfg_threshold_db    != threshold_db

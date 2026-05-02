@@ -8,19 +8,6 @@
 namespace godot {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// E Standard default band ranges (half-semitone below open, 2 octaves above)
-// ─────────────────────────────────────────────────────────────────────────────
-
-static constexpr BandRange STANDARD_RANGES[6] = {
-    { 80.11f,  329.64f },
-    { 106.87f, 440.00f },
-    { 142.65f, 587.32f },
-    { 190.42f, 784.00f },
-    { 239.91f, 987.76f },
-    { 320.25f, 1318.52f },
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // _bind_methods
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -73,15 +60,10 @@ void QEngineDetectorNode::_process(double /*delta*/)
 
 std::array<BandRange, 6> QEngineDetectorNode::current_ranges() const
 {
-    std::array<BandRange, 6> ranges;
+    std::array<BandRange, 6> ranges{};
     if (band_ranges.size() >= 12) {
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 6; ++i)
             ranges[i] = { band_ranges[i * 2], band_ranges[i * 2 + 1] };
-        }
-    } else {
-        for (int i = 0; i < 6; ++i) {
-            ranges[i] = STANDARD_RANGES[i];
-        }
     }
     return ranges;
 }
@@ -92,6 +74,10 @@ std::array<BandRange, 6> QEngineDetectorNode::current_ranges() const
 
 void QEngineDetectorNode::init_detector()
 {
+    // band_ranges must be configured from GDScript before init is useful.
+    if (band_ranges.size() < 12)
+        return;
+
     detector = std::make_unique<BandDetector>(
         static_cast<float>(sample_rate),
         current_ranges(),
