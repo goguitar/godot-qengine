@@ -6,14 +6,14 @@ reloadable = true
 
 [libraries]
 
-linux.debug.x86_64     = "res://../build/libgodot_qengine.so"
-linux.release.x86_64   = "res://../build/libgodot_qengine.so"
-linux.debug.arm64      = "res://../build/libgodot_qengine.so"
-linux.release.arm64    = "res://../build/libgodot_qengine.so"
-windows.debug.x86_64   = "res://../build/godot_qengine.dll"
-windows.release.x86_64 = "res://../build/godot_qengine.dll"
-macos.debug            = "res://../build/libgodot_qengine.dylib"
-macos.release          = "res://../build/libgodot_qengine.dylib"
+linux.debug.x86_64     = "res://addons/qengine/bin/libgodot_qengine.so"
+linux.release.x86_64   = "res://addons/qengine/bin/libgodot_qengine.so"
+linux.debug.arm64      = "res://addons/qengine/bin/libgodot_qengine.so"
+linux.release.arm64    = "res://addons/qengine/bin/libgodot_qengine.so"
+windows.debug.x86_64   = "res://addons/qengine/bin/godot_qengine.dll"
+windows.release.x86_64 = "res://addons/qengine/bin/godot_qengine.dll"
+macos.debug            = "res://addons/qengine/bin/libgodot_qengine.dylib"
+macos.release          = "res://addons/qengine/bin/libgodot_qengine.dylib"
 
 [icons]
 

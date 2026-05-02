@@ -71,7 +71,7 @@ static func midi_to_note_display(midi: int) -> String:
 	if midi < 0 or midi > 127:
 		return ""
 	var note_idx: int = ((midi % 12) + 12) % 12
-	var octave: int   = midi / 12 - 1
+	var octave: int   = int(float(midi) / 12.0) - 1
 	return NOTE_NAMES[note_idx] + str(octave)
 
 # ── Scene references ──────────────────────────────────────────────────────────
@@ -157,13 +157,13 @@ func _setup_dataset_playback() -> void:
 		var wav_files: PackedStringArray = []
 		dir.list_dir_begin()
 		while true:
-			var name: String = dir.get_next()
-			if name.is_empty():
+			var entry: String = dir.get_next()
+			if entry.is_empty():
 				break
 			if dir.current_is_dir():
 				continue
-			if name.to_lower().ends_with("_solo_mic.wav"):
-				wav_files.append(name)
+			if entry.to_lower().ends_with("_solo_mic.wav"):
+				wav_files.append(entry)
 		dir.list_dir_end()
 
 		if wav_files.is_empty():

@@ -15,7 +15,7 @@ static func freq_to_note_display(freq: float) -> String:
 	if midi < 0 or midi > 127:
 		return ""
 	var note_idx: int = ((midi % 12) + 12) % 12
-	var octave: int   = midi / 12 - 1
+	var octave: int   = int(float(midi) / 12.0) - 1
 	return NOTE_NAMES[note_idx] + str(octave)
 
 func _init() -> void:
@@ -106,14 +106,14 @@ func _list_dataset_files(dataset_dir: String) -> PackedStringArray:
 		return files
 	dir.list_dir_begin()
 	while true:
-		var name: String = dir.get_next()
-		if name.is_empty():
+		var entry: String = dir.get_next()
+		if entry.is_empty():
 			break
 		if dir.current_is_dir():
 			continue
-		if not name.to_lower().ends_with("_solo_mic.wav"):
+		if not entry.to_lower().ends_with("_solo_mic.wav"):
 			continue
-		files.append(dataset_dir.path_join(name))
+		files.append(dataset_dir.path_join(entry))
 	dir.list_dir_end()
 	files.sort()
 	return files

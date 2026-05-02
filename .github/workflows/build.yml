@@ -35,16 +35,16 @@ jobs:
         run: |
           mkdir -p demo/addons/qengine/bin
           cp build/libgodot_qengine.so demo/addons/qengine/bin/
-          # Patch gdextension to use a project-relative path so Godot 4.4 headless
-          # can find the library (res://../ paths outside the project dir are blocked).
-          sed -i 's|res://../build/libgodot_qengine.so|res://addons/qengine/bin/libgodot_qengine.so|g' \
-              demo/godot-qengine.gdextension
 
       - name: Download Godot 4.4 headless
         run: |
           wget -q https://github.com/godotengine/godot/releases/download/4.4-stable/Godot_v4.4-stable_linux.x86_64.zip
           unzip -q Godot_v4.4-stable_linux.x86_64.zip
           chmod +x Godot_v4.4-stable_linux.x86_64
+
+      - name: Import project (register extension + generate .godot/ metadata)
+        run: ./Godot_v4.4-stable_linux.x86_64 --headless --path demo/ --import
+        timeout-minutes: 2
 
       - name: Run demo dataset test (headless)
         run: |
