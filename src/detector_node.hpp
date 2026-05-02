@@ -37,6 +37,7 @@ public:
     void  push_samples(const PackedFloat32Array& samples);
 
     /// Process buffered samples, emit "notes_detected", and return the Array.
+    /// Always returns exactly 6 Dictionaries — one per band/string.
     Array poll_notes();
 
     /// Reset all Q detectors.
@@ -69,7 +70,6 @@ private:
 
     std::unique_ptr<BandDetector> detector;
 
-    Array poll_notes_internal();
     std::array<BandRange, 6> current_ranges() const;
 };
 

@@ -46,7 +46,7 @@ BandDetector::~BandDetector() = default;
 
 void BandDetector::push_samples(const float* samples, std::size_t count)
 {
-    _buffer.insert(_buffer.end(), samples, samples + count);
+    _ring.push(samples, count);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,21 +55,22 @@ void BandDetector::push_samples(const float* samples, std::size_t count)
 
 std::vector<DetectionResult> BandDetector::process()
 {
-    // Feed every buffered sample into all 6 band detectors simultaneously.
-    for (float s : _buffer) {
-        for (auto& pd : _detectors) {
+    // Drain every buffered sample from the SPSC ring into all 6 band detectors.
+    _ring.drain([&](float s) {
+        for (auto& pd : _detectors)
             (*pd)(s);
-        }
-    }
-    _buffer.clear();
+    });
 
     // Collect per-band results using Q's pitch type for MIDI note and cents.
+    // Always returns exactly 6 results — one per string — so callers can index
+    // by band number without filtering.  Bands with no active detection have
+    // raw_freq == 0, midi_note == -1, and cents == 0.
     std::vector<DetectionResult> results;
     results.reserve(6);
 
     for (int b = 0; b < 6; ++b) {
-        const float raw  = _detectors[b]->get_frequency();
-        const float per  = _detectors[b]->periodicity();
+        const float raw = _detectors[b]->get_frequency();
+        const float per = _detectors[b]->periodicity();
 
         int   midi  = -1;
         float cents = 0.0f;
@@ -77,8 +78,7 @@ std::vector<DetectionResult> BandDetector::process()
         if (raw > 0.0f) {
             // q::pitch is the canonical Q type for MIDI-mapped pitch values.
             // Constructing it from a frequency gives rep = MIDI note (as double).
-            // as_int(round(p)) → nearest integer MIDI note.
-            // (p.rep - round(p.rep)) * 100 → cents deviation [-50, +50].
+            // (p.rep - round(p.rep)) * 100 → cents deviation in [-50, +50].
             q::pitch p{q::frequency{raw}};
             if (p.valid()) {
                 const double rounded = std::round(p.rep);
@@ -101,8 +101,7 @@ std::vector<DetectionResult> BandDetector::process()
 
 void BandDetector::reset()
 {
-    for (auto& pd : _detectors) {
+    for (auto& pd : _detectors)
         pd->reset();
-    }
-    _buffer.clear();
+    _ring.clear();
 }

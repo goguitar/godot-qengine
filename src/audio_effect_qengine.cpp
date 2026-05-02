@@ -58,33 +58,36 @@ Array AudioEffectQEngine::poll_notes()
 {
     ensure_detector();
 
-    // Drain the capture buffer and push downmixed mono into the detector.
-    int64_t available = get_frames_available();
+    // Drain the Godot capture buffer, downmix stereo → mono in one batch,
+    // and push the whole block into the SPSC ring at once.
+    const int64_t available = get_frames_available();
     if (available > 0) {
-        PackedVector2Array frames = get_buffer(available);
-        const Vector2*     data  = frames.ptr();
-        for (int64_t i = 0; i < frames.size(); ++i) {
-            float mono = (data[i].x + data[i].y) * 0.5f;
-            detector->push_samples(&mono, 1);
-        }
+        const PackedVector2Array frames = get_buffer(available);
+        const int64_t            n      = frames.size();
+        const Vector2*           data   = frames.ptr();
+
+        std::vector<float> mono(static_cast<std::size_t>(n));
+        for (int64_t i = 0; i < n; ++i)
+            mono[i] = (data[i].x + data[i].y) * 0.5f;
+
+        detector->push_samples(mono.data(), mono.size());
     }
 
-    // Run detection and return raw results – note-name lookup is GDScript's job.
-    auto  results = detector->process();
-    float min_p   = static_cast<float>(min_periodicity);
+    // Drain ring → detectors, then return one Dictionary per band/string.
+    // All 6 bands are always present; GDScript checks midi_note != -1 (or
+    // raw_freq > 0) to know whether a note was detected on that string.
+    const auto results = detector->process();
 
     Array out;
+    out.resize(6);
     for (const auto& r : results) {
-        if (r.raw_freq <= 0.0f || r.periodicity < min_p) {
-            continue;
-        }
         Dictionary d;
         d["band"]        = r.band;
         d["frequency"]   = static_cast<double>(r.raw_freq);
         d["periodicity"] = static_cast<double>(r.periodicity);
         d["midi_note"]   = r.midi_note;
         d["cents"]       = static_cast<double>(r.cents);
-        out.push_back(d);
+        out[r.band] = d;
     }
     return out;
 }

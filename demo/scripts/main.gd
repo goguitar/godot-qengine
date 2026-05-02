@@ -319,11 +319,9 @@ func _normalize_note_class(note: String) -> String:
 			return note
 
 func _on_notes_detected(notes: Array) -> void:
-	for item in notes:
-		var band: int = item.get("band", -1)
-		if band < 0 or band >= _band_labels.size():
-			continue
-		var row: Array = _band_labels[band]
+	for band in range(min(notes.size(), _band_labels.size())):
+		var item: Dictionary = notes[band]
+		var row: Array   = _band_labels[band]
 		var freq: float  = item.get("frequency", 0.0)
 		var conf: float  = item.get("periodicity", 0.0)
 		var midi: int    = item.get("midi_note", -1)
@@ -333,7 +331,7 @@ func _on_notes_detected(notes: Array) -> void:
 		row[1].text = "%.1f Hz" % freq if freq > 0.0 else "—"
 		row[2].text = note if note != "" else "—"
 		row[3].text = "%.1f ¢" % cents if note != "" else "—"
-		row[4].text = "%.0f%%" % (conf * 100.0)
+		row[4].text = "%.0f%%" % (conf * 100.0) if freq > 0.0 else "—"
 		row[2].modulate = Color.GREEN if conf >= 0.8 else Color(0.6, 0.6, 0.6)
 
 func _build_string_labels() -> void:

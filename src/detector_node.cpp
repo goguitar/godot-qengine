@@ -63,10 +63,8 @@ void QEngineDetectorNode::_ready()
 
 void QEngineDetectorNode::_process(double /*delta*/)
 {
-    if (auto_poll) {
-        Array notes = poll_notes_internal();
-        emit_signal("notes_detected", notes);
-    }
+    if (auto_poll)
+        poll_notes(); // emits "notes_detected" internally
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,9 +109,28 @@ void QEngineDetectorNode::push_samples(const PackedFloat32Array& samples)
 
 Array QEngineDetectorNode::poll_notes()
 {
-    Array notes = poll_notes_internal();
-    emit_signal("notes_detected", notes);
-    return notes;
+    if (!detector)
+        return Array();
+
+    // Drain ring → detectors, then build one Dictionary per band/string.
+    // All 6 bands are always present; GDScript checks midi_note != -1 (or
+    // raw_freq > 0) to know whether a note was detected on that string.
+    const auto results = detector->process();
+
+    Array out;
+    out.resize(6);
+    for (const auto& r : results) {
+        Dictionary d;
+        d["band"]        = r.band;
+        d["frequency"]   = static_cast<double>(r.raw_freq);
+        d["periodicity"] = static_cast<double>(r.periodicity);
+        d["midi_note"]   = r.midi_note;
+        d["cents"]       = static_cast<double>(r.cents);
+        out[r.band] = d;
+    }
+
+    emit_signal("notes_detected", out);
+    return out;
 }
 
 void QEngineDetectorNode::reset()
@@ -121,35 +138,6 @@ void QEngineDetectorNode::reset()
     if (detector) {
         detector->reset();
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// poll_notes_internal (private)
-// ─────────────────────────────────────────────────────────────────────────────
-
-Array QEngineDetectorNode::poll_notes_internal()
-{
-    if (!detector) {
-        return Array();
-    }
-
-    auto  results = detector->process();
-    float min_p   = static_cast<float>(min_periodicity);
-
-    Array out;
-    for (const auto& r : results) {
-        if (r.raw_freq <= 0.0f || r.periodicity < min_p) {
-            continue;
-        }
-        Dictionary d;
-        d["band"]        = r.band;
-        d["frequency"]   = static_cast<double>(r.raw_freq);
-        d["periodicity"] = static_cast<double>(r.periodicity);
-        d["midi_note"]   = r.midi_note;
-        d["cents"]       = static_cast<double>(r.cents);
-        out.push_back(d);
-    }
-    return out;
 }
 
 } // namespace godot
