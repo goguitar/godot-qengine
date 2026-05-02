@@ -4,10 +4,24 @@ const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
 const MAX_FILES := 12
 const MAX_SECONDS_PER_FILE := 6.0
 
+# ── Note-name lookup (same logic as main.gd / guitar_detector.gd) ────────────
+const NOTE_NAMES := ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+static func freq_to_note_display(freq: float) -> String:
+	if freq <= 0.0:
+		return ""
+	var midi_f: float = 69.0 + 12.0 * log(freq / 440.0) / log(2.0)
+	var midi: int = int(round(midi_f))
+	if midi < 0 or midi > 127:
+		return ""
+	var note_idx: int = ((midi % 12) + 12) % 12
+	var octave: int   = midi / 12 - 1
+	return NOTE_NAMES[note_idx] + str(octave)
+
 func _init() -> void:
 	await process_frame
 
-	var effect: AudioEffectQEngine = _get_qengine_effect_on_capture()
+	var effect = _get_qengine_effect_on_capture()
 	if effect == null:
 		push_error("QEngine effect not found on Capture bus")
 		quit(1)
@@ -49,7 +63,8 @@ func _init() -> void:
 			await process_frame
 			var notes: Array = effect.poll_notes()
 			for item in notes:
-				var note: String = String(item.get("note", ""))
+				var freq: float = float(item.get("frequency", 0.0))
+				var note: String = freq_to_note_display(freq)
 				if note.is_empty():
 					continue
 				var note_class: String = _normalize_note_class(_detected_note_class(note))
@@ -74,13 +89,13 @@ func _init() -> void:
 	print("demo_dataset_test: passed=%d tested=%d" % [passed, tested])
 	quit(0 if tested > 0 and passed == tested else 1)
 
-func _get_qengine_effect_on_capture() -> AudioEffectQEngine:
+func _get_qengine_effect_on_capture():
 	var bus_idx: int = AudioServer.get_bus_index("Capture")
 	if bus_idx < 0:
 		return null
 	for i in AudioServer.get_bus_effect_count(bus_idx):
 		var fx := AudioServer.get_bus_effect(bus_idx, i)
-		if fx is AudioEffectQEngine:
+		if fx and fx.has_method("poll_notes"):
 			return fx
 	return null
 

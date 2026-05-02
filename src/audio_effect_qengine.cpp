@@ -1,4 +1,7 @@
 // audio_effect_qengine.cpp – AudioEffectQEngine implementation.
+//
+// The C++ layer outputs raw Q pitch-detector results (frequency + periodicity).
+// Note-name mapping and tuning selection live in GDScript.
 
 #include "audio_effect_qengine.hpp"
 
@@ -8,6 +11,20 @@
 #include <godot_cpp/variant/vector2.hpp>
 
 namespace godot {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E Standard default band ranges (half-semitone below open, 2 octaves above)
+// Used when GDScript has not yet set band_ranges.
+// ─────────────────────────────────────────────────────────────────────────────
+
+static constexpr BandRange STANDARD_RANGES[6] = {
+    { 80.11f,  329.64f },  // string 6: E2  (82.41 Hz)
+    { 106.87f, 440.00f },  // string 5: A2  (110.00 Hz)
+    { 142.65f, 587.32f },  // string 4: D3  (146.83 Hz)
+    { 190.42f, 784.00f },  // string 3: G3  (196.00 Hz)
+    { 239.91f, 987.76f },  // string 2: B3  (246.94 Hz)
+    { 320.25f, 1318.52f }, // string 1: E4  (329.63 Hz)
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // _bind_methods
@@ -22,15 +39,15 @@ void AudioEffectQEngine::_bind_methods()
     ClassDB::bind_method(D_METHOD("get_sample_rate"),          &AudioEffectQEngine::get_sample_rate);
     ClassDB::bind_method(D_METHOD("set_threshold_db",     "v"), &AudioEffectQEngine::set_threshold_db);
     ClassDB::bind_method(D_METHOD("get_threshold_db"),         &AudioEffectQEngine::get_threshold_db);
-    ClassDB::bind_method(D_METHOD("set_tuning",           "v"), &AudioEffectQEngine::set_tuning);
-    ClassDB::bind_method(D_METHOD("get_tuning"),               &AudioEffectQEngine::get_tuning);
     ClassDB::bind_method(D_METHOD("set_min_periodicity",  "v"), &AudioEffectQEngine::set_min_periodicity);
     ClassDB::bind_method(D_METHOD("get_min_periodicity"),      &AudioEffectQEngine::get_min_periodicity);
+    ClassDB::bind_method(D_METHOD("set_band_ranges",      "v"), &AudioEffectQEngine::set_band_ranges);
+    ClassDB::bind_method(D_METHOD("get_band_ranges"),          &AudioEffectQEngine::get_band_ranges);
 
-    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,  "sample_rate"),     "set_sample_rate",     "get_sample_rate");
-    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,  "threshold_db"),    "set_threshold_db",    "get_threshold_db");
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "tuning"),          "set_tuning",          "get_tuning");
-    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,  "min_periodicity"), "set_min_periodicity", "get_min_periodicity");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,               "sample_rate"),     "set_sample_rate",     "get_sample_rate");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,               "threshold_db"),    "set_threshold_db",    "get_threshold_db");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,               "min_periodicity"), "set_min_periodicity", "get_min_periodicity");
+    ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "band_ranges"),    "set_band_ranges",     "get_band_ranges");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,7 +69,7 @@ Array AudioEffectQEngine::poll_notes()
         }
     }
 
-    // Run detection and convert results to a Godot Array of Dictionaries.
+    // Run detection and return raw results – note-name lookup is GDScript's job.
     auto  results = detector->process();
     float min_p   = static_cast<float>(min_periodicity);
 
@@ -63,16 +80,8 @@ Array AudioEffectQEngine::poll_notes()
         }
         Dictionary d;
         d["band"]        = r.band;
-        d["string"]      = String(r.string_label.c_str());
         d["frequency"]   = static_cast<double>(r.raw_freq);
         d["periodicity"] = static_cast<double>(r.periodicity);
-        if (r.note) {
-            d["note"]  = String(r.note->display().c_str());
-            d["cents"] = static_cast<double>(r.note->cents);
-        } else {
-            d["note"]  = String("");
-            d["cents"] = 0.0;
-        }
         out.push_back(d);
     }
     return out;
@@ -91,6 +100,25 @@ void AudioEffectQEngine::reset()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// current_ranges (private) – build array from band_ranges or Standard defaults
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::array<BandRange, 6> AudioEffectQEngine::current_ranges() const
+{
+    std::array<BandRange, 6> ranges;
+    if (band_ranges.size() >= 12) {
+        for (int i = 0; i < 6; ++i) {
+            ranges[i] = { band_ranges[i * 2], band_ranges[i * 2 + 1] };
+        }
+    } else {
+        for (int i = 0; i < 6; ++i) {
+            ranges[i] = STANDARD_RANGES[i];
+        }
+    }
+    return ranges;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ensure_detector (private)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -100,16 +128,15 @@ void AudioEffectQEngine::ensure_detector()
         || cfg_sample_rate     != sample_rate
         || cfg_threshold_db    != threshold_db
         || cfg_min_periodicity != min_periodicity
-        || cfg_tuning          != tuning;
+        || cfg_band_ranges     != band_ranges;
 
     if (!needs_rebuild) {
         return;
     }
 
-    TuningId tid = tuning_from_string(tuning.utf8().get_data());
     detector = std::make_unique<BandDetector>(
         static_cast<float>(sample_rate),
-        tid,
+        current_ranges(),
         static_cast<float>(threshold_db)
     );
     detector->set_min_periodicity(static_cast<float>(min_periodicity));
@@ -117,7 +144,7 @@ void AudioEffectQEngine::ensure_detector()
     cfg_sample_rate     = sample_rate;
     cfg_threshold_db    = threshold_db;
     cfg_min_periodicity = min_periodicity;
-    cfg_tuning          = tuning;
+    cfg_band_ranges     = band_ranges;
     clear_buffer();
 }
 

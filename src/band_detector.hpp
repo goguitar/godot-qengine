@@ -4,31 +4,35 @@
 // string) and buffers incoming audio samples until process() is called.
 //
 // No Godot dependency – usable from tests without a Godot installation.
+// Tuning data (per-band frequency ranges) and note-name mapping are the
+// responsibility of the caller (e.g. GDScript in the Godot layer).
 
 #pragma once
 
 #include <array>
 #include <memory>
-#include <optional>
-#include <string>
 #include <vector>
-
-#include "note.hpp"
-#include "tuning.hpp"
 
 // Forward-declare the Q type to avoid pulling in heavy Q templates in the header.
 namespace cycfi { namespace q { class pitch_detector; } }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BandRange – frequency bounds for one pitch-detector band
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct BandRange {
+    float freq_min; ///< lower frequency bound (Hz)
+    float freq_max; ///< upper frequency bound (Hz)
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DetectionResult – result for one string band
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct DetectionResult {
-    int                     band;         ///< 0 = lowest string
-    std::string             string_label; ///< e.g. "E2"
-    float                   raw_freq;     ///< detected Hz (0 if none)
-    float                   periodicity;  ///< confidence [0, 1]
-    std::optional<DetectedNote> note;     ///< identified note, if any
+    int   band;        ///< 0 = lowest string
+    float raw_freq;    ///< detected Hz (0 if none)
+    float periodicity; ///< Q confidence [0, 1]
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,11 +46,11 @@ public:
 
     /// Construct a 6-band detector.
     /// @param sample_rate   Audio sample rate (Hz).
-    /// @param tuning_id     Which guitar tuning to use.
+    /// @param ranges        Per-band frequency bounds (6 entries, index 0 = lowest string).
     /// @param threshold_db  Noise-floor threshold in dB (negative, e.g. -45).
-    BandDetector(float    sample_rate,
-                 TuningId tuning_id,
-                 float    threshold_db = -45.0f);
+    BandDetector(float                           sample_rate,
+                 const std::array<BandRange, 6>& ranges,
+                 float                           threshold_db = -45.0f);
 
     ~BandDetector();
 
@@ -68,17 +72,9 @@ public:
 
     void  set_min_periodicity(float v) { _min_periodicity = std::max(0.0f, std::min(1.0f, v)); }
     float min_periodicity()  const     { return _min_periodicity; }
-    const Tuning& tuning()   const     { return _tuning; }
 
 private:
-    struct Band {
-        std::unique_ptr<cycfi::q::pitch_detector> detector;
-        StringInfo                                 info;
-    };
-
-    float                    _sample_rate;
-    Tuning                   _tuning;
-    std::array<Band, 6>      _bands;
-    std::vector<float>       _buffer;
-    float                    _min_periodicity = DEFAULT_MIN_PERIODICITY;
+    std::array<std::unique_ptr<cycfi::q::pitch_detector>, 6> _detectors;
+    std::vector<float>                                        _buffer;
+    float                                                     _min_periodicity = DEFAULT_MIN_PERIODICITY;
 };

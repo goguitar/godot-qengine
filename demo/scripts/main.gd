@@ -1,8 +1,92 @@
 ## main.gd – Demo scene controller for QEngine guitar pitch detection.
 ## Displays per-string detection results in a grid of UI labels.
+##
+## The C++ layer returns raw Q pitch-detector results (frequency + periodicity).
+## This script handles tuning definitions and note-name mapping.
 extends Control
 
-const TUNINGS: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
+# ── Tuning definitions ────────────────────────────────────────────────────────
+# band_ranges: 12 floats per tuning – [min0, max0, min1, max1, …, min5, max5]
+# Index 0 = lowest string.  Bounds: half-semitone below open, 2 octaves above.
+
+const TUNING_NAMES: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
+
+const TUNING_DATA := {
+	"Standard": PackedFloat32Array([
+		 80.11,  329.64,   # string 6: E2  82.41 Hz
+		106.87,  440.00,   # string 5: A2  110.00 Hz
+		142.65,  587.32,   # string 4: D3  146.83 Hz
+		190.42,  784.00,   # string 3: G3  196.00 Hz
+		239.91,  987.76,   # string 2: B3  246.94 Hz
+		320.25, 1318.52,   # string 1: E4  329.63 Hz
+	]),
+	"DropD": PackedFloat32Array([
+		 71.33,  293.68,   # string 6: D2  73.42 Hz
+		106.87,  440.00,
+		142.65,  587.32,
+		190.42,  784.00,
+		239.91,  987.76,
+		320.25, 1318.52,
+	]),
+	"OpenD": PackedFloat32Array([
+		 71.33,  293.68,   # string 6: D2  73.42 Hz
+		106.87,  440.00,   # string 5: A2
+		142.65,  587.32,   # string 4: D3
+		179.73,  740.00,   # string 3: F#3 185.00 Hz
+		213.74,  880.00,   # string 2: A3  220.00 Hz
+		285.30, 1174.64,   # string 1: D4  293.66 Hz
+	]),
+	"DropC": PackedFloat32Array([
+		 63.54,  261.64,   # string 6: C2  65.41 Hz
+		 95.21,  392.00,   # string 5: G2  98.00 Hz
+		127.09,  523.24,   # string 4: C3  130.81 Hz
+		169.64,  698.44,   # string 3: F3  174.61 Hz
+		213.74,  880.00,   # string 2: A3  220.00 Hz
+		285.30, 1174.64,   # string 1: D4  293.66 Hz
+	]),
+	"DADGAD": PackedFloat32Array([
+		 71.33,  293.68,   # string 6: D2  73.42 Hz
+		106.87,  440.00,   # string 5: A2
+		142.65,  587.32,   # string 4: D3
+		190.42,  784.00,   # string 3: G3
+		213.74,  880.00,   # string 2: A3  220.00 Hz
+		285.30, 1174.64,   # string 1: D4  293.66 Hz
+	]),
+}
+
+# Open-string note labels per tuning, used for the "String" column UI.
+const TUNING_STRING_LABELS := {
+	"Standard": ["E2", "A2", "D3", "G3", "B3", "E4"],
+	"DropD":    ["D2", "A2", "D3", "G3", "B3", "E4"],
+	"OpenD":    ["D2", "A2", "D3", "F#3", "A3", "D4"],
+	"DropC":    ["C2", "G2", "C3", "F3",  "A3", "D4"],
+	"DADGAD":   ["D2", "A2", "D3", "G3",  "A3", "D4"],
+}
+
+# ── Note-name lookup (mirrors freq_to_note_display() in guitar_detector.gd) ──
+const NOTE_NAMES := ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+## Returns "E2", "G#3", etc. for a given frequency, or "" if out of range.
+static func freq_to_note_display(freq: float) -> String:
+	if freq <= 0.0:
+		return ""
+	var midi_f: float = 69.0 + 12.0 * log(freq / 440.0) / log(2.0)
+	var midi: int = int(round(midi_f))
+	if midi < 0 or midi > 127:
+		return ""
+	var note_idx: int = ((midi % 12) + 12) % 12
+	var octave: int   = midi / 12 - 1
+	return NOTE_NAMES[note_idx] + str(octave)
+
+## Returns deviation in cents between detected_freq and its nearest equal-tempered pitch.
+static func freq_to_cents(freq: float) -> float:
+	if freq <= 0.0:
+		return 0.0
+	var midi_f: float = 69.0 + 12.0 * log(freq / 440.0) / log(2.0)
+	return (midi_f - round(midi_f)) * 100.0
+
+# ── Scene references ──────────────────────────────────────────────────────────
+
 const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
 
 @onready var _tuning_opt: OptionButton = $VBox/TuningHBox/TuningOption
@@ -14,7 +98,7 @@ const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
 
 var _band_labels: Array = []
 
-var _audio_effect: AudioEffectQEngine = null
+var _audio_effect = null
 var _dataset_player: AudioStreamPlayer = null
 var _dataset_monitor_player: AudioStreamPlayer = null
 var _dataset_single_file: bool = false
@@ -24,7 +108,7 @@ var _dataset_files: PackedStringArray = []
 var _dataset_index: int = 0
 
 func _ready() -> void:
-	for t in TUNINGS:
+	for t in TUNING_NAMES:
 		_tuning_opt.add_item(t)
 	_tuning_opt.selected = 0
 	_tuning_opt.item_selected.connect(_on_tuning_changed)
@@ -46,21 +130,17 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 
 	for i in AudioServer.get_bus_effect_count(bus_idx):
 		var fx := AudioServer.get_bus_effect(bus_idx, i)
-		if fx is AudioEffectQEngine:
-			_audio_effect = fx
-			_status_bar.text = "Status: AudioEffectQEngine found on Capture bus"
-			return
 		if fx and fx.has_method("poll_notes"):
 			_audio_effect = fx
 			_status_bar.text = "Status: AudioEffectQEngine found on Capture bus"
 			return
 
-	var new_fx := ClassDB.instantiate("AudioEffectQEngine") as AudioEffectQEngine
+	var new_fx := ClassDB.instantiate("AudioEffectQEngine")
 	if new_fx == null:
 		_status_bar.text = "Status: could not instantiate AudioEffectQEngine – using QEngineDetectorNode"
 		return
 
-	new_fx.tuning = TUNINGS[_tuning_opt.selected]
+	new_fx.band_ranges = TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]]
 	new_fx.threshold_db = _thresh_slider.value
 	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
 	_audio_effect = new_fx
@@ -132,7 +212,7 @@ func _setup_dataset_playback() -> void:
 	_dataset_player.play()
 	_dataset_monitor_player.play()
 	_status_bar.text = "Status: dataset playback [%s] on Capture bus (%s)" % [
-		String(TUNINGS[_tuning_opt.selected]),
+		String(TUNING_NAMES[_tuning_opt.selected]),
 		dataset_file.get_file(),
 	]
 
@@ -157,10 +237,12 @@ func _process(_delta: float) -> void:
 				_dataset_monitor_player.play()
 
 func _on_tuning_changed(index: int) -> void:
+	var tuning_name: String = TUNING_NAMES[index]
+	var ranges: PackedFloat32Array = TUNING_DATA[tuning_name]
 	if _audio_effect:
-		_audio_effect.tuning = String(TUNINGS[index])
+		_audio_effect.band_ranges = ranges
 	if _detector_node:
-		_detector_node.tuning = String(TUNINGS[index])
+		_detector_node.band_ranges = ranges
 		_detector_node.init_detector()
 	_rebuild_dataset_playlist()
 
@@ -177,7 +259,7 @@ func _rebuild_dataset_playlist() -> void:
 	if _dataset_all_files.is_empty():
 		return
 
-	var selected_tuning: String = String(TUNINGS[_tuning_opt.selected])
+	var selected_tuning: String = String(TUNING_NAMES[_tuning_opt.selected])
 	var wanted_keys: PackedStringArray = _preferred_dataset_keys_for_tuning(selected_tuning)
 	var filtered: PackedStringArray = []
 	for path in _dataset_all_files:
@@ -253,10 +335,10 @@ func _on_notes_detected(notes: Array) -> void:
 		if band < 0 or band >= _band_labels.size():
 			continue
 		var row: Array = _band_labels[band]
-		var freq: float = item.get("frequency", 0.0)
-		var note: String = item.get("note", "")
-		var cents: float = item.get("cents", 0.0)
-		var conf: float = item.get("periodicity", 0.0)
+		var freq: float  = item.get("frequency", 0.0)
+		var conf: float  = item.get("periodicity", 0.0)
+		var note: String = freq_to_note_display(freq)
+		var cents: float = freq_to_cents(freq)
 
 		row[1].text = "%.1f Hz" % freq if freq > 0.0 else "—"
 		row[2].text = note if note != "" else "—"

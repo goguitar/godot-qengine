@@ -8,6 +8,19 @@
 namespace godot {
 
 // ─────────────────────────────────────────────────────────────────────────────
+// E Standard default band ranges (half-semitone below open, 2 octaves above)
+// ─────────────────────────────────────────────────────────────────────────────
+
+static constexpr BandRange STANDARD_RANGES[6] = {
+    { 80.11f,  329.64f },
+    { 106.87f, 440.00f },
+    { 142.65f, 587.32f },
+    { 190.42f, 784.00f },
+    { 239.91f, 987.76f },
+    { 320.25f, 1318.52f },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // _bind_methods
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -22,18 +35,18 @@ void QEngineDetectorNode::_bind_methods()
     ClassDB::bind_method(D_METHOD("get_sample_rate"),           &QEngineDetectorNode::get_sample_rate);
     ClassDB::bind_method(D_METHOD("set_threshold_db",     "v"), &QEngineDetectorNode::set_threshold_db);
     ClassDB::bind_method(D_METHOD("get_threshold_db"),          &QEngineDetectorNode::get_threshold_db);
-    ClassDB::bind_method(D_METHOD("set_tuning",           "v"), &QEngineDetectorNode::set_tuning);
-    ClassDB::bind_method(D_METHOD("get_tuning"),                &QEngineDetectorNode::get_tuning);
     ClassDB::bind_method(D_METHOD("set_min_periodicity",  "v"), &QEngineDetectorNode::set_min_periodicity);
     ClassDB::bind_method(D_METHOD("get_min_periodicity"),       &QEngineDetectorNode::get_min_periodicity);
+    ClassDB::bind_method(D_METHOD("set_band_ranges",      "v"), &QEngineDetectorNode::set_band_ranges);
+    ClassDB::bind_method(D_METHOD("get_band_ranges"),           &QEngineDetectorNode::get_band_ranges);
     ClassDB::bind_method(D_METHOD("set_auto_poll",        "v"), &QEngineDetectorNode::set_auto_poll);
     ClassDB::bind_method(D_METHOD("get_auto_poll"),             &QEngineDetectorNode::get_auto_poll);
 
-    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,  "sample_rate"),     "set_sample_rate",     "get_sample_rate");
-    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,  "threshold_db"),    "set_threshold_db",    "get_threshold_db");
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "tuning"),          "set_tuning",          "get_tuning");
-    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,  "min_periodicity"), "set_min_periodicity", "get_min_periodicity");
-    ADD_PROPERTY(PropertyInfo(Variant::BOOL,   "auto_poll"),       "set_auto_poll",       "get_auto_poll");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,                "sample_rate"),     "set_sample_rate",     "get_sample_rate");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,                "threshold_db"),    "set_threshold_db",    "get_threshold_db");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT,                "min_periodicity"), "set_min_periodicity", "get_min_periodicity");
+    ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "band_ranges"),     "set_band_ranges",     "get_band_ranges");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL,                 "auto_poll"),       "set_auto_poll",       "get_auto_poll");
 
     ADD_SIGNAL(MethodInfo("notes_detected",
         PropertyInfo(Variant::ARRAY, "notes")));
@@ -57,15 +70,33 @@ void QEngineDetectorNode::_process(double /*delta*/)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// current_ranges (private) – build array from band_ranges or Standard defaults
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::array<BandRange, 6> QEngineDetectorNode::current_ranges() const
+{
+    std::array<BandRange, 6> ranges;
+    if (band_ranges.size() >= 12) {
+        for (int i = 0; i < 6; ++i) {
+            ranges[i] = { band_ranges[i * 2], band_ranges[i * 2 + 1] };
+        }
+    } else {
+        for (int i = 0; i < 6; ++i) {
+            ranges[i] = STANDARD_RANGES[i];
+        }
+    }
+    return ranges;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GDScript API
 // ─────────────────────────────────────────────────────────────────────────────
 
 void QEngineDetectorNode::init_detector()
 {
-    TuningId tid = tuning_from_string(tuning.utf8().get_data());
     detector = std::make_unique<BandDetector>(
         static_cast<float>(sample_rate),
-        tid,
+        current_ranges(),
         static_cast<float>(threshold_db)
     );
     detector->set_min_periodicity(static_cast<float>(min_periodicity));
@@ -112,16 +143,8 @@ Array QEngineDetectorNode::poll_notes_internal()
         }
         Dictionary d;
         d["band"]        = r.band;
-        d["string"]      = String(r.string_label.c_str());
         d["frequency"]   = static_cast<double>(r.raw_freq);
         d["periodicity"] = static_cast<double>(r.periodicity);
-        if (r.note) {
-            d["note"]  = String(r.note->display().c_str());
-            d["cents"] = static_cast<double>(r.note->cents);
-        } else {
-            d["note"]  = String("");
-            d["cents"] = 0.0;
-        }
         out.push_back(d);
     }
     return out;

@@ -1,9 +1,13 @@
 // detector_node.hpp – QEngineDetectorNode: a Godot Node for manual audio
 // routing.  Receives PCM frames via push_samples() and emits the
 // "notes_detected" signal (or returns notes from poll_notes()).
+//
+// Raw Q pitch-detector results (frequency + periodicity) are returned.
+// Note-name mapping and tuning selection live in GDScript.
 
 #pragma once
 
+#include <array>
 #include <memory>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/variant/array.hpp>
@@ -46,25 +50,27 @@ public:
     void   set_threshold_db(double v)     { threshold_db = v; }
     double get_threshold_db()     const   { return threshold_db; }
 
-    void   set_tuning(const String& v)    { tuning = v; }
-    String get_tuning()           const   { return tuning; }
-
     void   set_min_periodicity(double v)  { min_periodicity = v; }
     double get_min_periodicity()  const   { return min_periodicity; }
+
+    /// Per-band frequency bounds: 12 floats – [min0, max0, min1, max1, …, min5, max5].
+    void               set_band_ranges(const PackedFloat32Array& v) { band_ranges = v; }
+    PackedFloat32Array get_band_ranges()                    const   { return band_ranges; }
 
     void   set_auto_poll(bool v)          { auto_poll = v; }
     bool   get_auto_poll()        const   { return auto_poll; }
 
 private:
-    double sample_rate     = 44100.0;
-    double threshold_db    = -45.0;
-    String tuning          = "Standard";
-    double min_periodicity = 0.8;
-    bool   auto_poll       = true;
+    double             sample_rate     = 44100.0;
+    double             threshold_db    = -45.0;
+    double             min_periodicity = 0.8;
+    PackedFloat32Array band_ranges;
+    bool               auto_poll       = true;
 
     std::unique_ptr<BandDetector> detector;
 
     Array poll_notes_internal();
+    std::array<BandRange, 6> current_ranges() const;
 };
 
 } // namespace godot
