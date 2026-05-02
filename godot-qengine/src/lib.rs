@@ -1,8 +1,7 @@
 //! Godot 4.5 GDExtension entry-point.
 //!
 //! Registers:
-//! - [`AudioEffectQEngine`]  – custom `AudioEffect` resource for the audio bus
-//! - [`AudioEffectInstanceQEngine`] – the per-instance audio processor
+//! - [`AudioEffectQEngine`]  – `AudioEffectCapture`-based resource for the audio bus
 //! - [`QEngineDetectorNode`] – convenience `Node` for GDScript integration
 
 use godot::prelude::*;

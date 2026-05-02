@@ -2,7 +2,7 @@
 ## Displays per-string detection results in a grid of UI labels.
 extends Control
 
-const TUNINGS: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC"]
+const TUNINGS: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
 const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
 
 @onready var _tuning_opt: OptionButton = $VBox/TuningHBox/TuningOption
@@ -210,6 +210,8 @@ func _preferred_dataset_keys_for_tuning(tuning: String) -> PackedStringArray:
 			return ["D", "F#", "A"]
 		"DropC":
 			return ["C", "D#", "F", "G", "A"]
+		"DADGAD":
+			return ["D", "G", "A"]
 		_:
 			return []
 

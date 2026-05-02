@@ -8,9 +8,29 @@ on:
   workflow_dispatch:
 
 jobs:
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test -p qengine-sys -p qengine-core
+
   build-libs:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
+    needs: test
     strategy:
       fail-fast: false
       matrix:

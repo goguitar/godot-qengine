@@ -109,6 +109,9 @@ func _expected_note_from_filename(file_name: String) -> String:
 		return ""
 	var note_and_rest: String = parts[2]
 	var note: String = note_and_rest.split("_")[0]
+	# Strip minor-key suffix (e.g. "Em" → "E")
+	if note.ends_with("m"):
+		note = note.left(note.length() - 1)
 	return _normalize_note_class(note)
 
 func _detected_note_class(note: String) -> String:
