@@ -19,13 +19,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache CMake / FetchContent
-        uses: actions/cache@v4
-        with:
-          path: ~/.cmake
-          key: cmake-fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: cmake-fetchcontent-${{ runner.os }}-
-
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
@@ -62,13 +55,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Cache CMake / FetchContent
-        uses: actions/cache@v4
-        with:
-          path: ~/.cmake
-          key: cmake-fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: cmake-fetchcontent-${{ runner.os }}-
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release

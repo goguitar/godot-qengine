@@ -6,17 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# godot-cpp  –  official C++ GDExtension bindings (fetched at configure time)
+# godot-cpp  –  official C++ GDExtension bindings  (git submodule)
 # ─────────────────────────────────────────────────────────────────────────────
-include(FetchContent)
-
-FetchContent_Declare(
-    godot-cpp
-    GIT_REPOSITORY https://github.com/godotengine/godot-cpp.git
-    GIT_TAG        godot-4.4-stable
-    GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(godot-cpp)
+set(GODOT_CPP_DIR "${CMAKE_SOURCE_DIR}/third_party/godot-cpp")
+if(NOT EXISTS "${GODOT_CPP_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "godot-cpp not found at ${GODOT_CPP_DIR}.\n"
+        "Please run: git submodule update --init --recursive")
+endif()
+add_subdirectory("${GODOT_CPP_DIR}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # cycfi/Q and cycfi/infra  –  git submodules  (third_party/)
