@@ -63,27 +63,16 @@ const TUNING_STRING_LABELS := {
 	"DADGAD":   ["D2", "A2", "D3", "G3",  "A3", "D4"],
 }
 
-# ── Note-name lookup (mirrors freq_to_note_display() in guitar_detector.gd) ──
+# ── Note-name lookup ─────────────────────────────────────────────────────────
 const NOTE_NAMES := ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-## Returns "E2", "G#3", etc. for a given frequency, or "" if out of range.
-static func freq_to_note_display(freq: float) -> String:
-	if freq <= 0.0:
-		return ""
-	var midi_f: float = 69.0 + 12.0 * log(freq / 440.0) / log(2.0)
-	var midi: int = int(round(midi_f))
+## Returns "E2", "G#3", etc. from a MIDI note number, or "" if out of range.
+static func midi_to_note_display(midi: int) -> String:
 	if midi < 0 or midi > 127:
 		return ""
 	var note_idx: int = ((midi % 12) + 12) % 12
 	var octave: int   = midi / 12 - 1
 	return NOTE_NAMES[note_idx] + str(octave)
-
-## Returns deviation in cents between detected_freq and its nearest equal-tempered pitch.
-static func freq_to_cents(freq: float) -> float:
-	if freq <= 0.0:
-		return 0.0
-	var midi_f: float = 69.0 + 12.0 * log(freq / 440.0) / log(2.0)
-	return (midi_f - round(midi_f)) * 100.0
 
 # ── Scene references ──────────────────────────────────────────────────────────
 
@@ -337,8 +326,9 @@ func _on_notes_detected(notes: Array) -> void:
 		var row: Array = _band_labels[band]
 		var freq: float  = item.get("frequency", 0.0)
 		var conf: float  = item.get("periodicity", 0.0)
-		var note: String = freq_to_note_display(freq)
-		var cents: float = freq_to_cents(freq)
+		var midi: int    = item.get("midi_note", -1)
+		var cents: float = item.get("cents", 0.0)
+		var note: String = midi_to_note_display(midi)
 
 		row[1].text = "%.1f Hz" % freq if freq > 0.0 else "—"
 		row[2].text = note if note != "" else "—"

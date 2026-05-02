@@ -145,6 +145,8 @@ Array QEngineDetectorNode::poll_notes_internal()
         d["band"]        = r.band;
         d["frequency"]   = static_cast<double>(r.raw_freq);
         d["periodicity"] = static_cast<double>(r.periodicity);
+        d["midi_note"]   = r.midi_note;
+        d["cents"]       = static_cast<double>(r.cents);
         out.push_back(d);
     }
     return out;

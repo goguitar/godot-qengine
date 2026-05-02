@@ -33,6 +33,8 @@ struct DetectionResult {
     int   band;        ///< 0 = lowest string
     float raw_freq;    ///< detected Hz (0 if none)
     float periodicity; ///< Q confidence [0, 1]
+    int   midi_note;   ///< nearest MIDI note [0, 127]; -1 if no detection
+    float cents;       ///< deviation from nearest semitone in cents [-50, +50]
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

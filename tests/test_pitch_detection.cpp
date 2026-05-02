@@ -65,18 +65,16 @@ static constexpr std::array<BandRange, 6> DADGAD = {{
 }};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Inline note-name helper  (mirrors freq_to_note_display() in GDScript)
-// Returns e.g. "E2", "G#3".  Empty string for out-of-range frequencies.
+// Note-name helper  (uses midi_note from DetectionResult — same as GDScript)
+// Returns e.g. "E2", "G#3".  Empty string when midi_note == -1.
 // ─────────────────────────────────────────────────────────────────────────────
 
 static constexpr const char* NOTE_NAMES[12] = {
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 };
 
-static std::string freq_to_note_display(float freq)
+static std::string midi_to_note_display(int midi)
 {
-    if (freq <= 0.0f || !std::isfinite(freq)) return "";
-    int midi = static_cast<int>(std::round(69.0f + 12.0f * std::log2(freq / 440.0f)));
     if (midi < 0 || midi > 127) return "";
     int octave = midi / 12 - 1;
     return std::string(NOTE_NAMES[((midi % 12) + 12) % 12]) + std::to_string(octave);
@@ -98,16 +96,16 @@ static std::vector<float> sine_wave(float freq, float sr = 44100.0f, float secs 
     return buf;
 }
 
-/// Feed one second of a sine at `freq_in` through band `band_idx` and return
-/// the raw detected frequency.  Note-name lookup is done by the caller.
-static float run_detection(float                            freq_in,
-                           const std::array<BandRange, 6>& ranges,
-                           int                             band_idx)
+/// Feed one second of a sine at `freq_in` through `band_idx` and return the full
+/// DetectionResult so callers can inspect frequency, midi_note, and cents.
+static DetectionResult run_detection(float                            freq_in,
+                                     const std::array<BandRange, 6>& ranges,
+                                     int                             band_idx)
 {
     BandDetector det(44100.0f, ranges);
     auto buf = sine_wave(freq_in);
     det.push_samples(buf.data(), buf.size());
-    return det.process()[band_idx].raw_freq;
+    return det.process()[band_idx];
 }
 
 static int g_pass = 0;
@@ -131,22 +129,24 @@ static int g_fail = 0;
 
 static void test_standard_strings()
 {
-    struct Case { float freq; int band; const char* name; };
+    struct Case { float freq; int band; const char* name; int midi; };
     constexpr Case cases[] = {
-        {  82.41f, 0, "standard_e2_open_string" },
-        { 110.00f, 1, "standard_a2_open_string" },
-        { 146.83f, 2, "standard_d3_open_string" },
-        { 196.00f, 3, "standard_g3_open_string" },
-        { 246.94f, 4, "standard_b3_open_string" },
-        { 329.63f, 5, "standard_e4_open_string" },
+        {  82.41f, 0, "standard_e2_open_string", 40 },  // E2
+        { 110.00f, 1, "standard_a2_open_string", 45 },  // A2
+        { 146.83f, 2, "standard_d3_open_string", 50 },  // D3
+        { 196.00f, 3, "standard_g3_open_string", 55 },  // G3
+        { 246.94f, 4, "standard_b3_open_string", 59 },  // B3
+        { 329.63f, 5, "standard_e4_open_string", 64 },  // E4
     };
     const char* expected[] = { "E2", "A2", "D3", "G3", "B3", "E4" };
 
     for (int i = 0; i < 6; ++i) {
-        float freq = run_detection(cases[i].freq, STANDARD, cases[i].band);
-        std::string note = freq_to_note_display(freq);
-        CHECK(std::abs(freq - cases[i].freq) < 2.0f, cases[i].name);
-        CHECK(note == expected[i],                     (std::string(cases[i].name) + "_note").c_str());
+        auto r = run_detection(cases[i].freq, STANDARD, cases[i].band);
+        std::string note = midi_to_note_display(r.midi_note);
+        CHECK(std::abs(r.raw_freq - cases[i].freq) < 2.0f, cases[i].name);
+        CHECK(r.midi_note == cases[i].midi,                 (std::string(cases[i].name) + "_midi").c_str());
+        CHECK(note == expected[i],                          (std::string(cases[i].name) + "_note").c_str());
+        CHECK(std::abs(r.cents) < 50.0f,                   (std::string(cases[i].name) + "_cents_range").c_str());
     }
 }
 
@@ -156,17 +156,19 @@ static void test_standard_strings()
 
 static void test_fretted_notes()
 {
-    // 1st fret on E2 string → F2 (87.31 Hz)
+    // 1st fret on E2 string → F2 (87.31 Hz, MIDI 41)
     {
-        float freq = run_detection(87.31f, STANDARD, 0);
-        CHECK(std::abs(freq - 87.31f) < 2.0f,         "standard_first_fret_e2_string_f2");
-        CHECK(freq_to_note_display(freq) == "F2",      "standard_first_fret_e2_string_f2_note");
+        auto r = run_detection(87.31f, STANDARD, 0);
+        CHECK(std::abs(r.raw_freq - 87.31f) < 2.0f,        "standard_first_fret_e2_string_f2");
+        CHECK(r.midi_note == 41,                             "standard_first_fret_e2_string_f2_midi");
+        CHECK(midi_to_note_display(r.midi_note) == "F2",    "standard_first_fret_e2_string_f2_note");
     }
-    // 12th fret on E2 string → E3 (164.81 Hz)
+    // 12th fret on E2 string → E3 (164.81 Hz, MIDI 52)
     {
-        float freq = run_detection(164.81f, STANDARD, 0);
-        CHECK(std::abs(freq - 164.81f) < 2.0f,        "standard_twelfth_fret_e2_string_e3");
-        CHECK(freq_to_note_display(freq) == "E3",      "standard_twelfth_fret_e2_string_e3_note");
+        auto r = run_detection(164.81f, STANDARD, 0);
+        CHECK(std::abs(r.raw_freq - 164.81f) < 2.0f,       "standard_twelfth_fret_e2_string_e3");
+        CHECK(r.midi_note == 52,                             "standard_twelfth_fret_e2_string_e3_midi");
+        CHECK(midi_to_note_display(r.midi_note) == "E3",    "standard_twelfth_fret_e2_string_e3_note");
     }
 }
 
@@ -176,27 +178,31 @@ static void test_fretted_notes()
 
 static void test_alternative_tunings()
 {
-    // Drop D: low string is D2 (73.42 Hz)
+    // Drop D: low string is D2 (73.42 Hz, MIDI 38)
     {
-        float freq = run_detection(73.42f, DROP_D, 0);
-        CHECK(std::abs(freq - 73.42f) < 2.0f,         "drop_d_low_string");
-        CHECK(freq_to_note_display(freq) == "D2",      "drop_d_low_string_note");
+        auto r = run_detection(73.42f, DROP_D, 0);
+        CHECK(std::abs(r.raw_freq - 73.42f) < 2.0f,        "drop_d_low_string");
+        CHECK(r.midi_note == 38,                             "drop_d_low_string_midi");
+        CHECK(midi_to_note_display(r.midi_note) == "D2",    "drop_d_low_string_note");
     }
-    // Drop D: high string (string 1 = index 5) unchanged from Standard
+    // Drop D: high string (index 5) unchanged from Standard → E4 (329.63 Hz, MIDI 64)
     {
-        float freq = run_detection(329.63f, DROP_D, 5);
-        CHECK(std::abs(freq - 329.63f) < 2.0f,        "drop_d_high_strings_unchanged");
+        auto r = run_detection(329.63f, DROP_D, 5);
+        CHECK(std::abs(r.raw_freq - 329.63f) < 2.0f,       "drop_d_high_strings_unchanged");
+        CHECK(r.midi_note == 64,                             "drop_d_high_strings_unchanged_midi");
     }
-    // Drop C: low string is C2 (65.41 Hz)
+    // Drop C: low string is C2 (65.41 Hz, MIDI 36)
     {
-        float freq = run_detection(65.41f, DROP_C, 0);
-        CHECK(std::abs(freq - 65.41f) < 2.0f,         "drop_c_low_string_c2");
-        CHECK(freq_to_note_display(freq) == "C2",      "drop_c_low_string_c2_note");
+        auto r = run_detection(65.41f, DROP_C, 0);
+        CHECK(std::abs(r.raw_freq - 65.41f) < 2.0f,        "drop_c_low_string_c2");
+        CHECK(r.midi_note == 36,                             "drop_c_low_string_c2_midi");
+        CHECK(midi_to_note_display(r.midi_note) == "C2",    "drop_c_low_string_c2_note");
     }
-    // DADGAD: low string is D2 (73.42 Hz)
+    // DADGAD: low string is D2 (73.42 Hz, MIDI 38)
     {
-        float freq = run_detection(73.42f, DADGAD, 0);
-        CHECK(std::abs(freq - 73.42f) < 2.0f,         "dadgad_low_d2");
+        auto r = run_detection(73.42f, DADGAD, 0);
+        CHECK(std::abs(r.raw_freq - 73.42f) < 2.0f,        "dadgad_low_d2");
+        CHECK(r.midi_note == 38,                             "dadgad_low_d2_midi");
     }
 }
 
@@ -210,7 +216,7 @@ static void test_em_chord()
 {
     // ── em_chord_three_pitch_classes_detected ─────────────────────────────
     // Feed E2 → band 0, G3 → band 3, B3 → band 4 and confirm all three
-    // pitch classes are reported.
+    // pitch classes are reported via midi_note.
     {
         std::set<std::string> classes;
         struct TestCase { float freq; int band; };
@@ -220,10 +226,9 @@ static void test_em_chord()
             { 246.94f, 4 },   // B3
         };
         for (auto& tc : cases) {
-            float freq = run_detection(tc.freq, STANDARD, tc.band);
-            std::string note = freq_to_note_display(freq);
+            auto r = run_detection(tc.freq, STANDARD, tc.band);
+            std::string note = midi_to_note_display(r.midi_note);
             if (!note.empty()) {
-                // Extract pitch class (letters before the first digit)
                 std::size_t pos = 0;
                 while (pos < note.size() && !std::isdigit(static_cast<unsigned char>(note[pos]))) ++pos;
                 classes.insert(note.substr(0, pos));
@@ -236,21 +241,24 @@ static void test_em_chord()
 
     // ── em_chord_open_six_strings_per_band ────────────────────────────────
     // Open Em voicing: E2 B2 E3 G3 B3 E4 through their respective bands.
+    // Verify both midi_note and note-name for each string.
     {
-        struct TestCase { float freq; int band; const char* expected; };
+        struct TestCase { float freq; int band; const char* expected_note; int expected_midi; };
         const TestCase cases[] = {
-            {  82.41f, 0, "E2" },
-            { 123.47f, 1, "B2" },
-            { 164.81f, 2, "E3" },
-            { 196.00f, 3, "G3" },
-            { 246.94f, 4, "B3" },
-            { 329.63f, 5, "E4" },
+            {  82.41f, 0, "E2", 40 },
+            { 123.47f, 1, "B2", 47 },
+            { 164.81f, 2, "E3", 52 },
+            { 196.00f, 3, "G3", 55 },
+            { 246.94f, 4, "B3", 59 },
+            { 329.63f, 5, "E4", 64 },
         };
         for (auto& tc : cases) {
-            float freq = run_detection(tc.freq, STANDARD, tc.band);
-            std::string note = freq_to_note_display(freq);
-            std::string tag = std::string("em_chord_open_six_strings_per_band: ") + tc.expected;
-            CHECK(note == tc.expected, tag.c_str());
+            auto r = run_detection(tc.freq, STANDARD, tc.band);
+            std::string note = midi_to_note_display(r.midi_note);
+            std::string tag_note = std::string("em_chord_open_six_strings_per_band note: ") + tc.expected_note;
+            std::string tag_midi = std::string("em_chord_open_six_strings_per_band midi: ") + tc.expected_note;
+            CHECK(note == tc.expected_note,          tag_note.c_str());
+            CHECK(r.midi_note == tc.expected_midi,   tag_midi.c_str());
         }
     }
 
@@ -268,8 +276,8 @@ static void test_em_chord()
         };
         std::set<std::string> pitch_classes;
         for (auto& tc : cases) {
-            float freq = run_detection(tc.freq, STANDARD, tc.band);
-            std::string note = freq_to_note_display(freq);
+            auto r = run_detection(tc.freq, STANDARD, tc.band);
+            std::string note = midi_to_note_display(r.midi_note);
             if (!note.empty()) {
                 std::size_t pos = 0;
                 while (pos < note.size() && !std::isdigit(static_cast<unsigned char>(note[pos]))) ++pos;
