@@ -23,6 +23,8 @@ func _init() -> void:
 
 	var effect = _get_qengine_effect_on_capture()
 	if effect == null:
+		effect = _add_qengine_effect_on_capture()
+	if effect == null:
 		push_error("QEngine effect not found on Guitar In bus")
 		quit(1)
 		return
@@ -98,6 +100,28 @@ func _get_qengine_effect_on_capture():
 		if fx and fx.has_method("poll_notes"):
 			return fx
 	return null
+
+func _add_qengine_effect_on_capture():
+	var bus_idx: int = AudioServer.get_bus_index("Guitar In")
+	if bus_idx < 0:
+		return null
+
+	var fx: AudioEffect = ClassDB.instantiate("AudioEffectQEngine") as AudioEffect
+	if fx == null:
+		return null
+
+	fx.set("sample_rate", 48000.0)
+	fx.set("min_periodicity", 0.85)
+	fx.set("band_ranges", PackedFloat32Array([
+		 80.11,  329.64,
+		106.87,  440.00,
+		142.65,  587.32,
+		190.42,  784.00,
+		239.91,  987.76,
+		320.25, 1318.52,
+	]))
+	AudioServer.add_bus_effect(bus_idx, fx, 0)
+	return fx
 
 func _list_dataset_files(dataset_dir: String) -> PackedStringArray:
 	var files: PackedStringArray = []
