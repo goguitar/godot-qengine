@@ -4,49 +4,86 @@
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 #include <array>
-
+#include <cmath>
 namespace godot {
 
 namespace {
+void invalidate_result(DetectionResult& r)
+{
+    r.raw_freq = 0.0f;
+    r.periodicity = 0.0f;
+    r.midi_note = -1;
+    r.cents = 0.0f;
+}
+
+bool is_same_pitch(const DetectionResult& a, const DetectionResult& b)
+{
+    if (a.raw_freq <= 0.0f || b.raw_freq <= 0.0f) {
+        return false;
+    }
+    const double cents = 1200.0 * std::log2(static_cast<double>(a.raw_freq) / static_cast<double>(b.raw_freq));
+    return std::abs(cents) <= 35.0;
+}
+
 void apply_q_filters(std::vector<DetectionResult>& results, float min_periodicity)
 {
-    std::array<int, 128> best_band{};
-    std::array<float, 128> best_conf{};
-    best_band.fill(-1);
-    best_conf.fill(0.0f);
-
     for (auto& r : results) {
         const bool valid = r.midi_note >= 0 && r.midi_note <= 127
             && r.raw_freq > 0.0f
             && r.periodicity >= min_periodicity;
         if (!valid) {
-            r.raw_freq = 0.0f;
-            r.periodicity = 0.0f;
-            r.midi_note = -1;
-            r.cents = 0.0f;
-            continue;
-        }
-        const int midi = r.midi_note;
-        if (best_band[midi] == -1 ||
-            r.periodicity > best_conf[midi] ||
-            (r.periodicity == best_conf[midi] && r.band < best_band[midi])) {
-            best_band[midi] = r.band;
-            best_conf[midi] = r.periodicity;
+            invalidate_result(r);
         }
     }
 
-    for (auto& r : results) {
-        if (r.midi_note == -1) {
+    for (int i = 0; i < static_cast<int>(results.size()); ++i) {
+        if (results[i].midi_note == -1) {
             continue;
         }
-        if (best_band[r.midi_note] != r.band) {
-            r.raw_freq = 0.0f;
-            r.periodicity = 0.0f;
-            r.midi_note = -1;
-            r.cents = 0.0f;
+        for (int j = i + 1; j < static_cast<int>(results.size()); ++j) {
+            if (results[j].midi_note == -1 || !is_same_pitch(results[i], results[j])) {
+                continue;
+            }
+            if (results[j].periodicity > results[i].periodicity) {
+                invalidate_result(results[i]);
+                break;
+            }
+            invalidate_result(results[j]);
         }
     }
+}
+
+Dictionary make_chord_row(const std::vector<DetectionResult>& results)
+{
+    static constexpr const char* NOTE_NAMES[12] = {
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+    };
+
+    std::array<bool, 12> seen{};
+    seen.fill(false);
+    PackedStringArray chord_notes;
+    for (const auto& r : results) {
+        if (r.midi_note < 0 || r.midi_note > 127) {
+            continue;
+        }
+        const int cls = ((r.midi_note % 12) + 12) % 12;
+        if (!seen[cls]) {
+            chord_notes.append(String(NOTE_NAMES[cls]));
+            seen[cls] = true;
+        }
+    }
+
+    Dictionary chord;
+    chord["band"] = 6;
+    chord["kind"] = String("chord");
+    chord["frequency"] = 0.0;
+    chord["periodicity"] = 0.0;
+    chord["midi_note"] = -1;
+    chord["cents"] = 0.0;
+    chord["chord_notes"] = chord_notes;
+    return chord;
 }
 } // namespace
 
@@ -141,14 +178,13 @@ Array QEngineDetectorNode::poll_notes()
     if (!detector)
         return Array();
 
-    // Drain ring → detectors, then build one Dictionary per band/string.
-    // All 6 bands are always present; GDScript checks midi_note != -1 (or
-    // raw_freq > 0) to know whether a note was detected on that string.
+    // Drain ring → detectors, then build 7 rows:
+    // 6 per-string rows plus one chord summary row.
     auto results = detector->process();
     apply_q_filters(results, static_cast<float>(min_periodicity));
 
     Array out;
-    out.resize(6);
+    out.resize(7);
     for (const auto& r : results) {
         Dictionary d;
         d["band"]        = r.band;
@@ -158,6 +194,7 @@ Array QEngineDetectorNode::poll_notes()
         d["cents"]       = static_cast<double>(r.cents);
         out[r.band] = d;
     }
+    out[6] = make_chord_row(results);
 
     emit_signal("notes_detected", out);
     return out;

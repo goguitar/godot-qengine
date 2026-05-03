@@ -25,43 +25,43 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Inline tuning data  (mirrors the GDScript TUNING_DATA in the demo)
 // Format: 6 BandRange entries per tuning (index 0 = lowest string).
-// Bounds: half-semitone below open (×0.97153), two octaves above (×4.0).
+// Bounds: half-semitone below open (x0.97153), one octave above (x2.0).
 // ─────────────────────────────────────────────────────────────────────────────
 
 static constexpr std::array<BandRange, 6> STANDARD = {{
-    { 80.11f,  329.64f },   // E2  82.41 Hz
-    { 106.87f, 440.00f },   // A2  110.00 Hz
-    { 142.65f, 587.32f },   // D3  146.83 Hz
-    { 190.42f, 784.00f },   // G3  196.00 Hz
-    { 239.91f, 987.76f },   // B3  246.94 Hz
-    { 320.25f, 1318.52f },  // E4  329.63 Hz
+    { 80.11f,  164.82f },   // E2  82.41 Hz
+    { 106.87f, 220.00f },   // A2  110.00 Hz
+    { 142.65f, 293.66f },   // D3  146.83 Hz
+    { 190.42f, 392.00f },   // G3  196.00 Hz
+    { 239.91f, 493.88f },   // B3  246.94 Hz
+    { 320.25f, 659.26f },   // E4  329.63 Hz
 }};
 
 static constexpr std::array<BandRange, 6> DROP_D = {{
-    { 71.33f,  293.68f },   // D2  73.42 Hz
-    { 106.87f, 440.00f },   // A2  (unchanged)
-    { 142.65f, 587.32f },   // D3
-    { 190.42f, 784.00f },   // G3
-    { 239.91f, 987.76f },   // B3
-    { 320.25f, 1318.52f },  // E4
+    { 71.33f,  146.84f },   // D2  73.42 Hz
+    { 106.87f, 220.00f },   // A2  (unchanged)
+    { 142.65f, 293.66f },   // D3
+    { 190.42f, 392.00f },   // G3
+    { 239.91f, 493.88f },   // B3
+    { 320.25f, 659.26f },   // E4
 }};
 
 static constexpr std::array<BandRange, 6> DROP_C = {{
-    { 63.54f,  261.64f },   // C2  65.41 Hz
-    { 95.21f,  392.00f },   // G2  98.00 Hz
-    { 127.09f, 523.24f },   // C3  130.81 Hz
-    { 169.64f, 698.44f },   // F3  174.61 Hz
-    { 213.74f, 880.00f },   // A3  220.00 Hz
-    { 285.30f, 1174.64f },  // D4  293.66 Hz
+    { 63.54f,  130.82f },   // C2  65.41 Hz
+    { 95.21f,  196.00f },   // G2  98.00 Hz
+    { 127.09f, 261.62f },   // C3  130.81 Hz
+    { 169.64f, 349.22f },   // F3  174.61 Hz
+    { 213.74f, 440.00f },   // A3  220.00 Hz
+    { 285.30f, 587.32f },   // D4  293.66 Hz
 }};
 
 static constexpr std::array<BandRange, 6> DADGAD = {{
-    { 71.33f,  293.68f },   // D2  73.42 Hz
-    { 106.87f, 440.00f },   // A2
-    { 142.65f, 587.32f },   // D3
-    { 190.42f, 784.00f },   // G3
-    { 213.74f, 880.00f },   // A3  220.00 Hz
-    { 285.30f, 1174.64f },  // D4  293.66 Hz
+    { 71.33f,  146.84f },   // D2  73.42 Hz
+    { 106.87f, 220.00f },   // A2
+    { 142.65f, 293.66f },   // D3
+    { 190.42f, 392.00f },   // G3
+    { 213.74f, 440.00f },   // A3  220.00 Hz
+    { 285.30f, 587.32f },   // D4  293.66 Hz
 }};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +107,7 @@ static DetectionResult run_detection(float                            freq_in,
     det.push_samples(buf.data(), buf.size());
     return det.process()[band_idx];
 }
+
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -288,6 +289,7 @@ static void test_em_chord()
         CHECK(pitch_classes == expected_classes, "em_chord_note_classes_are_exactly_e_g_b");
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // main

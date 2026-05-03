@@ -25,7 +25,7 @@ func _init() -> void:
 	if effect == null:
 		effect = _add_qengine_effect_on_capture()
 	if effect == null:
-		push_error("QEngine effect not found on Guitar In bus")
+		push_error("QEngine effect not found on GuitarIn bus")
 		quit(1)
 		return
 
@@ -41,7 +41,7 @@ func _init() -> void:
 
 	var root: Window = get_root()
 	var player := AudioStreamPlayer.new()
-	player.bus = "Guitar In"
+	player.bus = "GuitarIn"
 	root.add_child(player)
 
 	var tested: int = 0
@@ -92,7 +92,7 @@ func _init() -> void:
 	quit(0 if tested > 0 and passed == tested else 1)
 
 func _get_qengine_effect_on_capture():
-	var bus_idx: int = AudioServer.get_bus_index("Guitar In")
+	var bus_idx: int = AudioServer.get_bus_index("GuitarIn")
 	if bus_idx < 0:
 		return null
 	for i in AudioServer.get_bus_effect_count(bus_idx):
@@ -102,7 +102,7 @@ func _get_qengine_effect_on_capture():
 	return null
 
 func _add_qengine_effect_on_capture():
-	var bus_idx: int = AudioServer.get_bus_index("Guitar In")
+	var bus_idx: int = AudioServer.get_bus_index("GuitarIn")
 	if bus_idx < 0:
 		return null
 
@@ -113,12 +113,12 @@ func _add_qengine_effect_on_capture():
 	fx.set("sample_rate", 48000.0)
 	fx.set("min_periodicity", 0.85)
 	fx.set("band_ranges", PackedFloat32Array([
-		 80.11,  329.64,
-		106.87,  440.00,
-		142.65,  587.32,
-		190.42,  784.00,
-		239.91,  987.76,
-		320.25, 1318.52,
+		 80.11,  164.82,
+		106.87,  220.00,
+		142.65,  293.66,
+		190.42,  392.00,
+		239.91,  493.88,
+		320.25,  659.26,
 	]))
 	AudioServer.add_bus_effect(bus_idx, fx, 0)
 	return fx

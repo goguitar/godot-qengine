@@ -16,12 +16,12 @@ var STANDARD_FREQS: PackedFloat32Array = PackedFloat32Array([82.41, 110.00, 146.
 # Per-band frequency ranges for E Standard tuning.
 # Format: [min0, max0, min1, max1, …, min5, max5]  (index 0 = lowest string)
 var STANDARD_RANGES: PackedFloat32Array = PackedFloat32Array([
-	 80.11,  329.64,   # string 6: E2
-	106.87,  440.00,   # string 5: A2
-	142.65,  587.32,   # string 4: D3
-	190.42,  784.00,   # string 3: G3
-	239.91,  987.76,   # string 2: B3
-	320.25, 1318.52,   # string 1: E4
+	 80.11,  164.82,   # string 6: E2
+	106.87,  220.00,   # string 5: A2
+	142.65,  293.66,   # string 4: D3
+	190.42,  392.00,   # string 3: G3
+	239.91,  493.88,   # string 2: B3
+	320.25,  659.26,   # string 1: E4
 ])
 
 const SAMPLE_RATE    := 48000.0

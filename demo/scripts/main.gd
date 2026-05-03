@@ -7,50 +7,50 @@ extends Control
 
 # ── Tuning definitions ────────────────────────────────────────────────────────
 # band_ranges: 12 floats per tuning – [min0, max0, min1, max1, …, min5, max5]
-# Index 0 = lowest string.  Bounds: half-semitone below open, 2 octaves above.
+# Index 0 = lowest string. Bounds: half-semitone below open, 1 octave above.
 
 const TUNING_NAMES: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC", "DADGAD"]
 
 var TUNING_DATA := {
 	"Standard": PackedFloat32Array([
-		 80.11,  329.64,   # string 6: E2  82.41 Hz
-		106.87,  440.00,   # string 5: A2  110.00 Hz
-		142.65,  587.32,   # string 4: D3  146.83 Hz
-		190.42,  784.00,   # string 3: G3  196.00 Hz
-		239.91,  987.76,   # string 2: B3  246.94 Hz
-		320.25, 1318.52,   # string 1: E4  329.63 Hz
+		 80.11,  164.82,   # string 6: E2  82.41 Hz
+		106.87,  220.00,   # string 5: A2  110.00 Hz
+		142.65,  293.66,   # string 4: D3  146.83 Hz
+		190.42,  392.00,   # string 3: G3  196.00 Hz
+		239.91,  493.88,   # string 2: B3  246.94 Hz
+		320.25,  659.26,   # string 1: E4  329.63 Hz
 	]),
 	"DropD": PackedFloat32Array([
-		 71.33,  293.68,   # string 6: D2  73.42 Hz
-		106.87,  440.00,
-		142.65,  587.32,
-		190.42,  784.00,
-		239.91,  987.76,
-		320.25, 1318.52,
+		 71.33,  146.84,   # string 6: D2  73.42 Hz
+		106.87,  220.00,
+		142.65,  293.66,
+		190.42,  392.00,
+		239.91,  493.88,
+		320.25,  659.26,
 	]),
 	"OpenD": PackedFloat32Array([
-		 71.33,  293.68,   # string 6: D2  73.42 Hz
-		106.87,  440.00,   # string 5: A2
-		142.65,  587.32,   # string 4: D3
-		179.73,  740.00,   # string 3: F#3 185.00 Hz
-		213.74,  880.00,   # string 2: A3  220.00 Hz
-		285.30, 1174.64,   # string 1: D4  293.66 Hz
+		 71.33,  146.84,   # string 6: D2  73.42 Hz
+		106.87,  220.00,   # string 5: A2
+		142.65,  293.66,   # string 4: D3
+		179.73,  370.00,   # string 3: F#3 185.00 Hz
+		213.74,  440.00,   # string 2: A3  220.00 Hz
+		285.30,  587.32,   # string 1: D4  293.66 Hz
 	]),
 	"DropC": PackedFloat32Array([
-		 63.54,  261.64,   # string 6: C2  65.41 Hz
-		 95.21,  392.00,   # string 5: G2  98.00 Hz
-		127.09,  523.24,   # string 4: C3  130.81 Hz
-		169.64,  698.44,   # string 3: F3  174.61 Hz
-		213.74,  880.00,   # string 2: A3  220.00 Hz
-		285.30, 1174.64,   # string 1: D4  293.66 Hz
+		 63.54,  130.82,   # string 6: C2  65.41 Hz
+		 95.21,  196.00,   # string 5: G2  98.00 Hz
+		127.09,  261.62,   # string 4: C3  130.81 Hz
+		169.64,  349.22,   # string 3: F3  174.61 Hz
+		213.74,  440.00,   # string 2: A3  220.00 Hz
+		285.30,  587.32,   # string 1: D4  293.66 Hz
 	]),
 	"DADGAD": PackedFloat32Array([
-		 71.33,  293.68,   # string 6: D2  73.42 Hz
-		106.87,  440.00,   # string 5: A2
-		142.65,  587.32,   # string 4: D3
-		190.42,  784.00,   # string 3: G3
-		213.74,  880.00,   # string 2: A3  220.00 Hz
-		285.30, 1174.64,   # string 1: D4  293.66 Hz
+		 71.33,  146.84,   # string 6: D2  73.42 Hz
+		106.87,  220.00,   # string 5: A2
+		142.65,  293.66,   # string 4: D3
+		190.42,  392.00,   # string 3: G3
+		213.74,  440.00,   # string 2: A3  220.00 Hz
+		285.30,  587.32,   # string 1: D4  293.66 Hz
 	]),
 }
 
@@ -102,7 +102,7 @@ var _dataset_all_files: PackedStringArray = []
 var _dataset_files: PackedStringArray = []
 var _dataset_index: int = 0
 
-## 0 = Playback (dataset files routed through Guitar In), 1 = Input (live mic).
+## 0 = Playback (dataset files routed through GuitarIn), 1 = Input (live mic).
 var _mode: int = 0
 
 func _ready() -> void:
@@ -133,9 +133,9 @@ func _ready() -> void:
 	_guitar_in_player.stop()
 
 func _ensure_audio_effect_on_capture_bus() -> void:
-	var bus_idx := AudioServer.get_bus_index("Guitar In")
+	var bus_idx := AudioServer.get_bus_index("GuitarIn")
 	if bus_idx < 0:
-		_status_bar.text = "Status: Guitar In bus not found – using QEngineDetectorNode"
+		_status_bar.text = "Status: GuitarIn bus not found – using QEngineDetectorNode"
 		return
 
 	for i in AudioServer.get_bus_effect_count(bus_idx):
@@ -147,7 +147,7 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 			_audio_effect.set("sample_rate",     SAMPLE_RATE)
 			_audio_effect.set("min_periodicity", MIN_CONFIDENCE)
 			_audio_effect.set("threshold_db",    _thresh_slider.value)
-			_status_bar.text = "Status: AudioEffectQEngine found on Guitar In bus"
+			_status_bar.text = "Status: AudioEffectQEngine found on GuitarIn bus"
 			return
 
 	var new_fx: AudioEffect = ClassDB.instantiate("AudioEffectQEngine") as AudioEffect
@@ -161,7 +161,7 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 	new_fx.set("threshold_db",    _thresh_slider.value)
 	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
 	_audio_effect = new_fx
-	_status_bar.text = "Status: AudioEffectQEngine added to Guitar In bus"
+	_status_bar.text = "Status: AudioEffectQEngine added to GuitarIn bus"
 
 func _setup_dataset_playback() -> void:
 	_dataset_single_file = false
@@ -217,7 +217,7 @@ func _setup_dataset_playback() -> void:
 
 	if _dataset_player == null:
 		_dataset_player = AudioStreamPlayer.new()
-		_dataset_player.bus = "Guitar In"    # routes through AudioEffectQEngine for detection
+		_dataset_player.bus = "GuitarIn"    # routes through AudioEffectQEngine for detection
 		add_child(_dataset_player)
 	if _dataset_monitor_player == null:
 		_dataset_monitor_player = AudioStreamPlayer.new()
@@ -268,7 +268,7 @@ func _on_mode_changed(index: int) -> void:
 				_dataset_player.play()
 				if _dataset_monitor_player:
 					_dataset_monitor_player.play()
-		_status_bar.text = "Status: Playback – dataset on Guitar In bus"
+		_status_bar.text = "Status: Playback – dataset on GuitarIn bus"
 	else:
 		# Input mode: stop dataset, start live mic.
 		if _dataset_player:
@@ -276,7 +276,7 @@ func _on_mode_changed(index: int) -> void:
 		if _dataset_monitor_player:
 			_dataset_monitor_player.stop()
 		_guitar_in_player.play()
-		_status_bar.text = "Status: Input – live mic/guitar on Guitar In bus"
+		_status_bar.text = "Status: Input – live mic/guitar on GuitarIn bus"
 
 func _on_tuning_changed(index: int) -> void:
 	var tuning_name: String = TUNING_NAMES[index]

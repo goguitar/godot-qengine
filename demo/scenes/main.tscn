@@ -76,7 +76,7 @@ autowrap_mode = 3
 
 [node name="GuitarInPlayer" type="AudioStreamPlayer" parent="."]
 stream = SubResource("AudioStreamMicrophone_1")
-bus = &"Guitar In"
+bus = &"GuitarIn"
 autoplay = false
 
 [node name="QEngineDetectorNode" type="QEngineDetectorNode" parent="."]

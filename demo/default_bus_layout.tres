@@ -3,7 +3,7 @@
 [sub_resource type="AudioEffectRecord" id="AudioEffectRecord_guitarin"]
 
 [resource]
-bus/1/name = &"Guitar In"
+bus/1/name = &"GuitarIn"
 bus/1/solo = false
 bus/1/mute = false
 bus/1/bypass_fx = false
