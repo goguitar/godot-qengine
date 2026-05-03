@@ -24,7 +24,7 @@ var STANDARD_RANGES: PackedFloat32Array = PackedFloat32Array([
 	320.25, 1318.52,   # string 1: E4
 ])
 
-const SAMPLE_RATE    := 44100.0
+const SAMPLE_RATE    := 48000.0
 const BLOCK_SECONDS  := 0.05   # generate 50 ms of audio each frame
 
 var _phase      : float = 0.0

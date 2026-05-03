@@ -77,13 +77,19 @@ static func midi_to_note_display(midi: int) -> String:
 # ── Scene references ──────────────────────────────────────────────────────────
 
 const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
+## Only display detections with periodicity >= this threshold.
+const MIN_CONFIDENCE       := 0.85
+## Project sample rate (must match project.godot audio/driver/mix_rate).
+const SAMPLE_RATE          := 48000.0
 
-@onready var _tuning_opt: OptionButton = $VBox/TuningHBox/TuningOption
-@onready var _thresh_slider: HSlider = $VBox/ThresholdHBox/ThresholdSlider
-@onready var _thresh_label: Label = $VBox/ThresholdHBox/ThresholdValue
-@onready var _strings_grid: GridContainer = $VBox/StringsGrid
-@onready var _status_bar: Label = $VBox/StatusBar
-@onready var _detector_node: Node = $QEngineDetectorNode
+@onready var _mode_opt:      OptionButton   = $VBox/ModeHBox/ModeOption
+@onready var _tuning_opt:    OptionButton   = $VBox/TuningHBox/TuningOption
+@onready var _thresh_slider: HSlider        = $VBox/ThresholdHBox/ThresholdSlider
+@onready var _thresh_label:  Label          = $VBox/ThresholdHBox/ThresholdValue
+@onready var _strings_grid:  GridContainer  = $VBox/StringsGrid
+@onready var _status_bar:    Label          = $VBox/StatusBar
+@onready var _detector_node: Node           = $QEngineDetectorNode
+@onready var _guitar_in_player: AudioStreamPlayer = $GuitarInPlayer
 
 var _band_labels: Array = []
 
@@ -96,7 +102,16 @@ var _dataset_all_files: PackedStringArray = []
 var _dataset_files: PackedStringArray = []
 var _dataset_index: int = 0
 
+## 0 = Playback (dataset files routed through Guitar In), 1 = Input (live mic).
+var _mode: int = 0
+
 func _ready() -> void:
+	# Populate mode selector – Playback first so dataset runs on launch.
+	_mode_opt.add_item("Playback")
+	_mode_opt.add_item("Input")
+	_mode_opt.selected = 0
+	_mode_opt.item_selected.connect(_on_mode_changed)
+
 	for t in TUNING_NAMES:
 		_tuning_opt.add_item(t)
 	_tuning_opt.selected = 0
@@ -108,9 +123,14 @@ func _ready() -> void:
 	_ensure_audio_effect_on_capture_bus()
 	_setup_dataset_playback()
 
-	if _audio_effect == null and _detector_node and _detector_node.has_signal("notes_detected"):
+	if _detector_node and _detector_node.has_signal("notes_detected"):
 		_detector_node.set("band_ranges", TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]])
+		_detector_node.set("sample_rate", SAMPLE_RATE)
+		_detector_node.set("min_periodicity", MIN_CONFIDENCE)
 		_detector_node.connect("notes_detected", _on_notes_detected)
+
+	# Start in Playback mode – mic player off.
+	_guitar_in_player.stop()
 
 func _ensure_audio_effect_on_capture_bus() -> void:
 	var bus_idx := AudioServer.get_bus_index("Guitar In")
@@ -122,6 +142,11 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 		var fx := AudioServer.get_bus_effect(bus_idx, i)
 		if fx and fx.has_method("poll_notes"):
 			_audio_effect = fx
+			# Always apply current configuration so detection works immediately.
+			_audio_effect.set("band_ranges",     TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]])
+			_audio_effect.set("sample_rate",     SAMPLE_RATE)
+			_audio_effect.set("min_periodicity", MIN_CONFIDENCE)
+			_audio_effect.set("threshold_db",    _thresh_slider.value)
 			_status_bar.text = "Status: AudioEffectQEngine found on Guitar In bus"
 			return
 
@@ -130,8 +155,10 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 		_status_bar.text = "Status: could not instantiate AudioEffectQEngine – using QEngineDetectorNode"
 		return
 
-	new_fx.set("band_ranges", TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]])
-	new_fx.set("threshold_db", _thresh_slider.value)
+	new_fx.set("band_ranges",     TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]])
+	new_fx.set("sample_rate",     SAMPLE_RATE)
+	new_fx.set("min_periodicity", MIN_CONFIDENCE)
+	new_fx.set("threshold_db",    _thresh_slider.value)
 	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
 	_audio_effect = new_fx
 	_status_bar.text = "Status: AudioEffectQEngine added to Guitar In bus"
@@ -190,18 +217,18 @@ func _setup_dataset_playback() -> void:
 
 	if _dataset_player == null:
 		_dataset_player = AudioStreamPlayer.new()
-		_dataset_player.bus = "Guitar In"
+		_dataset_player.bus = "Guitar In"    # routes through AudioEffectQEngine for detection
 		add_child(_dataset_player)
 	if _dataset_monitor_player == null:
 		_dataset_monitor_player = AudioStreamPlayer.new()
-		_dataset_monitor_player.bus = "Master"
+		_dataset_monitor_player.bus = "Playback"  # dedicated Playback bus → Master for output
 		add_child(_dataset_monitor_player)
 
 	_dataset_player.stream = stream
 	_dataset_monitor_player.stream = stream
 	_dataset_player.play()
 	_dataset_monitor_player.play()
-	_status_bar.text = "Status: dataset playback [%s] on Guitar In bus (%s)" % [
+	_status_bar.text = "Status: Playback [%s] – %s" % [
 		String(TUNING_NAMES[_tuning_opt.selected]),
 		dataset_file.get_file(),
 	]
@@ -215,7 +242,8 @@ func _process(_delta: float) -> void:
 	if _audio_effect:
 		_on_notes_detected(_audio_effect.poll_notes())
 
-	if _dataset_player and _dataset_files.size() > 1 and not _dataset_player.playing:
+	# Advance dataset playlist when current track ends (Playback mode only).
+	if _mode == 0 and _dataset_player and _dataset_files.size() > 1 and not _dataset_player.playing:
 		_dataset_index = (_dataset_index + 1) % _dataset_files.size()
 		var next_stream: AudioStreamWAV = _load_wav(_dataset_files[_dataset_index])
 		if next_stream:
@@ -225,6 +253,30 @@ func _process(_delta: float) -> void:
 			_dataset_player.play()
 			if _dataset_monitor_player:
 				_dataset_monitor_player.play()
+
+func _on_mode_changed(index: int) -> void:
+	_mode = index
+	if _mode == 0:
+		# Playback mode: stop mic, start dataset.
+		_guitar_in_player.stop()
+		if _dataset_player and _dataset_files.size() > 0:
+			var stream: AudioStreamWAV = _load_wav(_dataset_files[_dataset_index])
+			if stream:
+				_dataset_player.stream = stream
+				if _dataset_monitor_player:
+					_dataset_monitor_player.stream = stream
+				_dataset_player.play()
+				if _dataset_monitor_player:
+					_dataset_monitor_player.play()
+		_status_bar.text = "Status: Playback – dataset on Guitar In bus"
+	else:
+		# Input mode: stop dataset, start live mic.
+		if _dataset_player:
+			_dataset_player.stop()
+		if _dataset_monitor_player:
+			_dataset_monitor_player.stop()
+		_guitar_in_player.play()
+		_status_bar.text = "Status: Input – live mic/guitar on Guitar In bus"
 
 func _on_tuning_changed(index: int) -> void:
 	var tuning_name: String = TUNING_NAMES[index]
@@ -261,7 +313,7 @@ func _rebuild_dataset_playlist() -> void:
 	_dataset_files = filtered
 	_dataset_index = 0
 
-	if _dataset_player and _dataset_files.size() > 0:
+	if _mode == 0 and _dataset_player and _dataset_files.size() > 0:
 		var stream: AudioStreamWAV = _load_wav(_dataset_files[0])
 		if stream:
 			_dataset_player.stream = stream
@@ -297,42 +349,74 @@ func _key_class_from_filename(file_name: String) -> String:
 
 func _normalize_note_class(note: String) -> String:
 	match note:
-		"Cb":
-			return "B"
-		"Db":
-			return "C#"
-		"Eb":
-			return "D#"
-		"Fb":
-			return "E"
-		"Gb":
-			return "F#"
-		"Ab":
-			return "G#"
-		"Bb":
-			return "A#"
-		"E#":
-			return "F"
-		"B#":
-			return "C"
-		_:
-			return note
+		"Cb": return "B"
+		"Db": return "C#"
+		"Eb": return "D#"
+		"Fb": return "E"
+		"Gb": return "F#"
+		"Ab": return "G#"
+		"Bb": return "A#"
+		"E#": return "F"
+		"B#": return "C"
+		_:    return note
+
+## Deduplicate notes: when the same MIDI note appears on multiple bands in
+## the same frame, keep only the band with the highest periodicity confidence
+## and suppress the others.  This prevents harmonic bleed from one string
+## showing up as a false detection on neighbouring bands.
+func _deduplicate_notes(notes: Array) -> Array:
+	# First pass: find the band with highest confidence for each midi_note.
+	var best: Dictionary = {}   # midi_note (int) -> { band: int, conf: float }
+	for i in notes.size():
+		var item: Dictionary = notes[i]
+		var midi: int   = item.get("midi_note", -1)
+		var conf: float = item.get("periodicity", 0.0)
+		if midi == -1 or conf < MIN_CONFIDENCE:
+			continue
+		if not best.has(midi) or conf > best[midi]["conf"]:
+			best[midi] = { "band": i, "conf": conf }
+
+	# Second pass: suppress bands that lost the contest for their note.
+	var out: Array = notes.duplicate(true)
+	for i in out.size():
+		var item: Dictionary = out[i]
+		var midi: int   = item.get("midi_note", -1)
+		var conf: float = item.get("periodicity", 0.0)
+		if midi == -1 or conf < MIN_CONFIDENCE:
+			continue
+		if best[midi]["band"] != i:
+			var silent: Dictionary = item.duplicate()
+			silent["frequency"]   = 0.0
+			silent["periodicity"] = 0.0
+			silent["midi_note"]   = -1
+			silent["cents"]       = 0.0
+			out[i] = silent
+	return out
 
 func _on_notes_detected(notes: Array) -> void:
-	for band in range(min(notes.size(), _band_labels.size())):
-		var item: Dictionary = notes[band]
+	var deduped: Array = _deduplicate_notes(notes)
+	for band in range(min(deduped.size(), _band_labels.size())):
+		var item: Dictionary = deduped[band]
 		var row: Array   = _band_labels[band]
 		var freq: float  = item.get("frequency", 0.0)
 		var conf: float  = item.get("periodicity", 0.0)
 		var midi: int    = item.get("midi_note", -1)
 		var cents: float = item.get("cents", 0.0)
-		var note: String = midi_to_note_display(midi)
 
-		row[1].text = "%.1f Hz" % freq if freq > 0.0 else "—"
-		row[2].text = note if note != "" else "—"
-		row[3].text = "%.1f ¢" % cents if note != "" else "—"
-		row[4].text = "%.0f%%" % (conf * 100.0) if freq > 0.0 else "—"
-		row[2].modulate = Color.GREEN if conf >= 0.8 else Color(0.6, 0.6, 0.6)
+		# Only display detections with confidence at or above the threshold.
+		if conf < MIN_CONFIDENCE or freq <= 0.0:
+			row[1].text = "—"
+			row[2].text = "—"
+			row[3].text = "—"
+			row[4].text = "—"
+			row[2].modulate = Color(0.6, 0.6, 0.6)
+		else:
+			var note: String = midi_to_note_display(midi)
+			row[1].text = "%.1f Hz" % freq
+			row[2].text = note if note != "" else "—"
+			row[3].text = "%.1f ¢" % cents if note != "" else "—"
+			row[4].text = "%.0f%%" % (conf * 100.0)
+			row[2].modulate = Color.GREEN
 
 func _build_string_labels() -> void:
 	for h in ["String", "Frequency", "Note", "Cents", "Conf."]:

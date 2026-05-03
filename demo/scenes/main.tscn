@@ -28,6 +28,15 @@ offset_bottom = -20.0
 text = "🎸  QEngine Guitar Pitch Detector"
 theme_override_font_sizes/font_size = 22
 
+[node name="ModeHBox" type="HBoxContainer" parent="VBox"]
+
+[node name="ModeLabel" type="Label" parent="VBox/ModeHBox"]
+text = "Source:"
+theme_override_font_sizes/font_size = 14
+
+[node name="ModeOption" type="OptionButton" parent="VBox/ModeHBox"]
+custom_minimum_size = Vector2(140, 0)
+
 [node name="TuningHBox" type="HBoxContainer" parent="VBox"]
 
 [node name="TuningLabel" type="Label" parent="VBox/TuningHBox"]
@@ -61,14 +70,14 @@ theme_override_constants/h_separation = 16
 theme_override_constants/v_separation = 8
 
 [node name="StatusBar" type="Label" parent="VBox"]
-text = "Status: idle — plug in a guitar/mic; audio routes to Guitar In bus via AudioStreamMicrophone"
+text = "Status: idle — select Source: Playback for dataset test, or Input for live guitar/mic"
 theme_override_font_sizes/font_size = 12
 autowrap_mode = 3
 
 [node name="GuitarInPlayer" type="AudioStreamPlayer" parent="."]
 stream = SubResource("AudioStreamMicrophone_1")
 bus = &"Guitar In"
-autoplay = true
+autoplay = false
 
 [node name="QEngineDetectorNode" type="QEngineDetectorNode" parent="."]
 script = ExtResource("2_detector")
