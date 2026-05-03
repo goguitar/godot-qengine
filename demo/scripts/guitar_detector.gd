@@ -11,11 +11,11 @@
 extends Node
 
 # Note frequencies for E Standard (open strings) – used for synthesis.
-const STANDARD_FREQS: PackedFloat32Array = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63]
+var STANDARD_FREQS: PackedFloat32Array = PackedFloat32Array([82.41, 110.00, 146.83, 196.00, 246.94, 329.63])
 
 # Per-band frequency ranges for E Standard tuning.
 # Format: [min0, max0, min1, max1, …, min5, max5]  (index 0 = lowest string)
-const STANDARD_RANGES: PackedFloat32Array = PackedFloat32Array([
+var STANDARD_RANGES: PackedFloat32Array = PackedFloat32Array([
 	 80.11,  329.64,   # string 6: E2
 	106.87,  440.00,   # string 5: A2
 	142.65,  587.32,   # string 4: D3
