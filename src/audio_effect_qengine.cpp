@@ -11,8 +11,51 @@
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/vector2.hpp>
+#include <array>
 
 namespace godot {
+
+namespace {
+void apply_q_filters(std::vector<DetectionResult>& results, float min_periodicity)
+{
+    std::array<int, 128> best_band{};
+    std::array<float, 128> best_conf{};
+    best_band.fill(-1);
+    best_conf.fill(0.0f);
+
+    for (auto& r : results) {
+        const bool valid = r.midi_note >= 0 && r.midi_note <= 127
+            && r.raw_freq > 0.0f
+            && r.periodicity >= min_periodicity;
+        if (!valid) {
+            r.raw_freq = 0.0f;
+            r.periodicity = 0.0f;
+            r.midi_note = -1;
+            r.cents = 0.0f;
+            continue;
+        }
+        const int midi = r.midi_note;
+        if (best_band[midi] == -1 ||
+            r.periodicity > best_conf[midi] ||
+            (r.periodicity == best_conf[midi] && r.band < best_band[midi])) {
+            best_band[midi] = r.band;
+            best_conf[midi] = r.periodicity;
+        }
+    }
+
+    for (auto& r : results) {
+        if (r.midi_note == -1) {
+            continue;
+        }
+        if (best_band[r.midi_note] != r.band) {
+            r.raw_freq = 0.0f;
+            r.periodicity = 0.0f;
+            r.midi_note = -1;
+            r.cents = 0.0f;
+        }
+    }
+}
+} // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // _bind_methods
@@ -78,7 +121,8 @@ Array AudioEffectQEngine::poll_notes()
     // Drain ring → detectors, then return one Dictionary per band/string.
     // All 6 bands are always present; GDScript checks midi_note != -1 (or
     // raw_freq > 0) to know whether a note was detected on that string.
-    const auto results = detector->process();
+    auto results = detector->process();
+    apply_q_filters(results, static_cast<float>(min_periodicity));
 
     Array out;
     out.resize(6);

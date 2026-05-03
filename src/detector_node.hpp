@@ -72,7 +72,7 @@ public:
 private:
     double             sample_rate     = 44100.0;
     double             threshold_db    = -45.0;
-    double             min_periodicity = 0.8;
+    double             min_periodicity = 0.85;
     PackedFloat32Array band_ranges;
     bool               auto_poll       = true;
 

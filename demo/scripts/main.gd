@@ -360,51 +360,16 @@ func _normalize_note_class(note: String) -> String:
 		"B#": return "C"
 		_:    return note
 
-## Deduplicate notes: when the same MIDI note appears on multiple bands in
-## the same frame, keep only the band with the highest periodicity confidence
-## and suppress the others.  This prevents harmonic bleed from one string
-## showing up as a false detection on neighbouring bands.
-func _deduplicate_notes(notes: Array) -> Array:
-	# First pass: find the band with highest confidence for each midi_note.
-	var best: Dictionary = {}   # midi_note (int) -> { band: int, conf: float }
-	for i in notes.size():
-		var item: Dictionary = notes[i]
-		var midi: int   = item.get("midi_note", -1)
-		var conf: float = item.get("periodicity", 0.0)
-		if midi == -1 or conf < MIN_CONFIDENCE:
-			continue
-		if not best.has(midi) or conf > best[midi]["conf"]:
-			best[midi] = { "band": i, "conf": conf }
-
-	# Second pass: suppress bands that lost the contest for their note.
-	var out: Array = notes.duplicate(true)
-	for i in out.size():
-		var item: Dictionary = out[i]
-		var midi: int   = item.get("midi_note", -1)
-		var conf: float = item.get("periodicity", 0.0)
-		if midi == -1 or conf < MIN_CONFIDENCE:
-			continue
-		if best[midi]["band"] != i:
-			var silent: Dictionary = item.duplicate()
-			silent["frequency"]   = 0.0
-			silent["periodicity"] = 0.0
-			silent["midi_note"]   = -1
-			silent["cents"]       = 0.0
-			out[i] = silent
-	return out
-
 func _on_notes_detected(notes: Array) -> void:
-	var deduped: Array = _deduplicate_notes(notes)
-	for band in range(min(deduped.size(), _band_labels.size())):
-		var item: Dictionary = deduped[band]
+	for band in range(min(notes.size(), _band_labels.size())):
+		var item: Dictionary = notes[band]
 		var row: Array   = _band_labels[band]
 		var freq: float  = item.get("frequency", 0.0)
 		var conf: float  = item.get("periodicity", 0.0)
 		var midi: int    = item.get("midi_note", -1)
 		var cents: float = item.get("cents", 0.0)
 
-		# Only display detections with confidence at or above the threshold.
-		if conf < MIN_CONFIDENCE or freq <= 0.0:
+		if midi == -1 or freq <= 0.0:
 			row[1].text = "—"
 			row[2].text = "—"
 			row[3].text = "—"
