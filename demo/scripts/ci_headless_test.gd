@@ -10,7 +10,7 @@ extends SceneTree
 const SAMPLE_RATE := 44100
 
 # Standard tuning band_ranges (mirrors TUNING_DATA["Standard"] in main.gd)
-const STANDARD_RANGES := PackedFloat32Array([
+var STANDARD_RANGES := PackedFloat32Array([
 	 80.11,  329.64,   # band 0: E2  82.41 Hz
 	106.87,  440.00,   # band 1: A2 110.00 Hz
 	142.65,  587.32,   # band 2: D3 146.83 Hz
