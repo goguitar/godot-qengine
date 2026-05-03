@@ -34,11 +34,11 @@ var _note_time  : float = 1.5   # seconds per note cycle
 
 func _ready() -> void:
 	# Configure the detector with E Standard band ranges.
+	# Setting band_ranges automatically triggers init_detector() internally.
 	set("band_ranges", STANDARD_RANGES)
 	set("sample_rate", SAMPLE_RATE)
 	set("threshold_db", -45.0)
 	set("auto_poll", false)   # we will poll manually
-	call("init_detector")
 
 func _process(delta: float) -> void:
 	# Cycle through each open-string frequency every _note_time seconds
