@@ -21,16 +21,6 @@ static func freq_to_note_display(freq: float) -> String:
 func _init() -> void:
 	await process_frame
 
-	var added_effect: AudioEffect = null
-	var effect = _get_qengine_effect_on_capture()
-	if effect == null:
-		effect = _add_qengine_effect_on_capture()
-		added_effect = effect
-	if effect == null:
-		push_error("QEngine effect not found on GuitarIn bus")
-		quit(1)
-		return
-
 	var dataset_dir: String = OS.get_environment("QENGINE_DATASET_DIR")
 	if dataset_dir.is_empty():
 		dataset_dir = DEFAULT_DATASET_DIR
@@ -42,6 +32,24 @@ func _init() -> void:
 		return
 
 	var root: Window = get_root()
+	var detector = ClassDB.instantiate("QEngineDetectorNode")
+	if detector == null:
+		push_error("QEngineDetectorNode class not available")
+		quit(1)
+		return
+	root.add_child(detector)
+	detector.set("auto_poll", false)
+	detector.set("sample_rate", 44100.0)
+	detector.set("min_periodicity", 0.85)
+	detector.set("band_ranges", PackedFloat32Array([
+		 80.11,  164.82,
+		106.87,  220.00,
+		142.65,  293.66,
+		190.42,  392.00,
+		239.91,  493.88,
+		320.25,  659.26,
+	]))
+	var detector_sample_rate := 44100.0
 
 	var tested: int = 0
 	var passed: int = 0
@@ -49,47 +57,35 @@ func _init() -> void:
 		if tested >= MAX_FILES:
 			break
 
-		var stream: AudioStreamWAV = AudioStreamWAV.load_from_file(file_path)
-		if stream == null:
+		var wav := _load_wav_samples(file_path, MAX_SECONDS_PER_FILE)
+		if wav.is_empty():
 			continue
+		var samples: PackedFloat32Array = wav.get("samples", PackedFloat32Array())
+		if samples.is_empty():
+			continue
+		var wav_rate: float = float(wav.get("sample_rate", detector_sample_rate))
+		if abs(wav_rate - detector_sample_rate) > 0.5:
+			detector.set("sample_rate", wav_rate)
+			detector.init_detector()
+			detector_sample_rate = wav_rate
 
-		var player := AudioStreamPlayer.new()
-		player.bus = "GuitarIn"
-		root.add_child(player)
-		player.stream = stream
-		effect.reset()
-		player.play()
+		detector.reset()
 
 		var expected: String = _expected_note_from_filename(file_path.get_file())
 		var counts: Dictionary = {}
-		var start_ms: int = Time.get_ticks_msec()
-		while player.playing and (Time.get_ticks_msec() - start_ms) < int(MAX_SECONDS_PER_FILE * 1000.0):
+		var idx: int = 0
+		var block_size: int = 512
+		while idx < samples.size():
+			var end_idx: int = min(idx + block_size, samples.size())
+			var block: PackedFloat32Array = samples.slice(idx, end_idx)
+			detector.push_samples(block)
 			await process_frame
-			var frames: Array = effect.pop_chord_frames()
-			for cf in frames:
-				var active_count: int = int(cf.get("active_count", 0))
-				var dom_midi: int = int(cf.get("dominant_midi", -1))
-				if active_count <= 0 or dom_midi < 0:
-					continue
-				var note_class: String = _normalize_note_class(_midi_note_class(dom_midi))
-				if note_class.is_empty():
-					continue
-				counts[note_class] = int(counts.get(note_class, 0)) + 1
+			_drain_chord_frames(detector, counts)
+			idx = end_idx
 
-		player.stop()
-		var playback = player.get_stream_playback()
-		if playback != null:
-			playback.stop()
-			playback.free()
-		player.stream = null
-		if stream != null:
-			stream.free()
-		stream = null
-		if player.get_parent() != null:
-			player.get_parent().remove_child(player)
-		player.free()
 		for _i in 3:
 			await process_frame
+			_drain_chord_frames(detector, counts)
 
 		var detected: String = _top_detected(counts)
 		var expected_hits: int = int(counts.get(expected, 0))
@@ -107,49 +103,11 @@ func _init() -> void:
 			file_path.get_file(),
 		])
 
-	if added_effect != null:
-		_remove_qengine_effect(added_effect)
-		added_effect = null
-	effect = null
-	while AudioServer.get_bus_count() > 1:
-		AudioServer.remove_bus(AudioServer.get_bus_count() - 1)
-	for _i in 3:
-		await process_frame
+	detector.queue_free()
+	await detector.tree_exited
 
 	print("demo_dataset_test: passed=%d tested=%d" % [passed, tested])
 	quit(0 if tested > 0 and passed == tested else 1)
-
-func _get_qengine_effect_on_capture():
-	var bus_idx: int = AudioServer.get_bus_index("GuitarIn")
-	if bus_idx < 0:
-		return null
-	for i in AudioServer.get_bus_effect_count(bus_idx):
-		var fx := AudioServer.get_bus_effect(bus_idx, i)
-		if fx and fx.has_method("poll_notes"):
-			return fx
-	return null
-
-func _add_qengine_effect_on_capture():
-	var bus_idx: int = AudioServer.get_bus_index("GuitarIn")
-	if bus_idx < 0:
-		return null
-
-	var fx: AudioEffect = ClassDB.instantiate("AudioEffectQEngine") as AudioEffect
-	if fx == null:
-		return null
-
-	fx.set("sample_rate", 48000.0)
-	fx.set("min_periodicity", 0.85)
-	fx.set("band_ranges", PackedFloat32Array([
-		 80.11,  164.82,
-		106.87,  220.00,
-		142.65,  293.66,
-		190.42,  392.00,
-		239.91,  493.88,
-		320.25,  659.26,
-	]))
-	AudioServer.add_bus_effect(bus_idx, fx, 0)
-	return fx
 
 func _list_dataset_files(dataset_dir: String) -> PackedStringArray:
 	var files: PackedStringArray = []
@@ -227,11 +185,86 @@ func _top_detected(counts: Dictionary) -> String:
 			top_note = String(k)
 	return top_note
 
-func _remove_qengine_effect(fx: AudioEffect) -> void:
-	var bus_idx: int = AudioServer.get_bus_index("GuitarIn")
-	if bus_idx < 0:
-		return
-	for i in AudioServer.get_bus_effect_count(bus_idx):
-		if AudioServer.get_bus_effect(bus_idx, i) == fx:
-			AudioServer.remove_bus_effect(bus_idx, i)
-			return
+func _drain_chord_frames(detector, counts: Dictionary) -> void:
+	var frames: Array = detector.pop_chord_frames()
+	for cf in frames:
+		var active_count: int = int(cf.get("active_count", 0))
+		var dom_midi: int = int(cf.get("dominant_midi", -1))
+		if active_count <= 0 or dom_midi < 0:
+			continue
+		var note_class: String = _normalize_note_class(_midi_note_class(dom_midi))
+		if note_class.is_empty():
+			continue
+		counts[note_class] = int(counts.get(note_class, 0)) + 1
+
+func _load_wav_samples(path: String, max_seconds: float) -> Dictionary:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {}
+	var riff := file.get_buffer(4).get_string_from_ascii()
+	if riff != "RIFF":
+		return {}
+	file.get_32()
+	var wave := file.get_buffer(4).get_string_from_ascii()
+	if wave != "WAVE":
+		return {}
+
+	var channels: int = 0
+	var bits: int = 0
+	var sample_rate: int = 0
+	var data_pos: int = -1
+	var data_size: int = 0
+
+	while file.get_position() < file.get_length():
+		var chunk_id_bytes := file.get_buffer(4)
+		if chunk_id_bytes.size() < 4:
+			break
+		var chunk_id := chunk_id_bytes.get_string_from_ascii()
+		var chunk_size := int(file.get_32())
+		if chunk_id == "fmt ":
+			var format := int(file.get_16())
+			channels = int(file.get_16())
+			sample_rate = int(file.get_32())
+			file.get_32()
+			file.get_16()
+			bits = int(file.get_16())
+			var extra := chunk_size - 16
+			if extra > 0:
+				file.seek(file.get_position() + extra)
+			if format != 1:
+				return {}
+		elif chunk_id == "data":
+			data_pos = int(file.get_position())
+			data_size = chunk_size
+			break
+		else:
+			var skip := chunk_size + (chunk_size % 2)
+			file.seek(file.get_position() + skip)
+
+	if data_pos < 0 or bits != 16 or channels <= 0 or sample_rate <= 0:
+		return {}
+
+	file.seek(data_pos)
+	var bytes_per_sample := bits / 8
+	var total_frames := int(data_size / (bytes_per_sample * channels))
+	if max_seconds > 0.0:
+		var max_frames := int(float(sample_rate) * max_seconds)
+		total_frames = min(total_frames, max_frames)
+
+	var samples := PackedFloat32Array()
+	samples.resize(total_frames)
+	for i in total_frames:
+		var sum := 0.0
+		for _c in channels:
+			if file.eof_reached():
+				break
+			var raw := int(file.get_16())
+			if raw > 32767:
+				raw -= 65536
+			sum += float(raw) / 32768.0
+		samples[i] = sum / float(channels)
+
+	return {
+		"sample_rate": float(sample_rate),
+		"samples": samples,
+	}
