@@ -210,8 +210,8 @@ fn ranges_from_packed(ranges: &PackedFloat32Array) -> Option<[QEngineBandRange; 
     Some(out)
 }
 
-fn detection_dict(frame: QEngineDetectionFrame) -> Dictionary {
-    let mut d = Dictionary::new();
+fn detection_dict(frame: QEngineDetectionFrame) -> VarDictionary {
+    let mut d = VarDictionary::new();
     d.set("time_sec", frame.time_sec);
     d.set("pitch_hz", frame.pitch_hz as f64);
     d.set("midi_note", frame.midi_note);
@@ -223,8 +223,8 @@ fn detection_dict(frame: QEngineDetectionFrame) -> Dictionary {
     d
 }
 
-fn note_event_dict(ev: QEngineNoteEvent) -> Dictionary {
-    let mut d = Dictionary::new();
+fn note_event_dict(ev: QEngineNoteEvent) -> VarDictionary {
+    let mut d = VarDictionary::new();
     d.set("time_sec", ev.time_sec);
     d.set("pitch_hz", ev.pitch_hz as f64);
     d.set("midi_note", ev.midi_note);
@@ -233,8 +233,8 @@ fn note_event_dict(ev: QEngineNoteEvent) -> Dictionary {
     d
 }
 
-fn string_component_dict(sc: QEngineStringComponent) -> Dictionary {
-    let mut d = Dictionary::new();
+fn string_component_dict(sc: QEngineStringComponent) -> VarDictionary {
+    let mut d = VarDictionary::new();
     d.set("band", sc.band);
     d.set("pitch_hz", sc.pitch_hz as f64);
     d.set("midi_float", sc.midi_float as f64);
@@ -245,8 +245,8 @@ fn string_component_dict(sc: QEngineStringComponent) -> Dictionary {
     d
 }
 
-fn chord_frame_dict(cf: QEngineChordFrame) -> Dictionary {
-    let mut d = Dictionary::new();
+fn chord_frame_dict(cf: QEngineChordFrame) -> VarDictionary {
+    let mut d = VarDictionary::new();
     d.set("time_sec", cf.time_sec);
     d.set("level", cf.level as f64);
     d.set("dominant_band", cf.dominant_band);
@@ -255,7 +255,7 @@ fn chord_frame_dict(cf: QEngineChordFrame) -> Dictionary {
     d.set("dominant_confidence", cf.dominant_confidence as f64);
     d.set("active_count", cf.active_count);
 
-    let mut strings: Array<Dictionary> = Array::new();
+    let mut strings: Array<VarDictionary> = Array::new();
     for sc in cf.strings {
         strings.push(&string_component_dict(sc));
     }
@@ -263,7 +263,7 @@ fn chord_frame_dict(cf: QEngineChordFrame) -> Dictionary {
     d
 }
 
-fn chord_row(chord: QEngineChordFrame, min_periodicity: f32) -> Dictionary {
+fn chord_row(chord: QEngineChordFrame, min_periodicity: f32) -> VarDictionary {
     let mut seen = [false; 12];
     let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
     let mut chord_notes = PackedStringArray::new();
@@ -279,7 +279,7 @@ fn chord_row(chord: QEngineChordFrame, min_periodicity: f32) -> Dictionary {
         }
     }
 
-    let mut d = Dictionary::new();
+    let mut d = VarDictionary::new();
     d.set("band", 6);
     d.set("kind", "chord");
     d.set("frequency", 0.0f64);
@@ -355,8 +355,8 @@ impl QEngineDetectorNode {
     }
 
     #[func]
-    fn poll_notes(&mut self) -> Array<Dictionary> {
-        let mut out: Array<Dictionary> = Array::new();
+    fn poll_notes(&mut self) -> Array<VarDictionary> {
+        let mut out: Array<VarDictionary> = Array::new();
         let Some(detector) = &self.detector else {
             return out;
         };
@@ -365,7 +365,7 @@ impl QEngineDetectorNode {
         let chord = detector.latest_chord();
 
         for sc in chord.strings {
-            let mut d = Dictionary::new();
+            let mut d = VarDictionary::new();
             d.set("band", sc.band);
             d.set("frequency", sc.pitch_hz as f64);
             d.set("periodicity", sc.confidence as f64);
@@ -385,7 +385,7 @@ impl QEngineDetectorNode {
     }
 
     #[func]
-    fn get_latest_detection(&self) -> Dictionary {
+    fn get_latest_detection(&self) -> VarDictionary {
         match &self.detector {
             Some(detector) => detection_dict(detector.latest_detection()),
             None => detection_dict(QEngineDetectionFrame::default()),
@@ -393,8 +393,8 @@ impl QEngineDetectorNode {
     }
 
     #[func]
-    fn pop_note_events(&mut self) -> Array<Dictionary> {
-        let mut out: Array<Dictionary> = Array::new();
+    fn pop_note_events(&mut self) -> Array<VarDictionary> {
+        let mut out: Array<VarDictionary> = Array::new();
         if let Some(detector) = &self.detector {
             for ev in detector.pop_note_events(128) {
                 out.push(&note_event_dict(ev));
@@ -404,8 +404,8 @@ impl QEngineDetectorNode {
     }
 
     #[func]
-    fn get_frame_history(&mut self, count: i32) -> Array<Dictionary> {
-        let mut out: Array<Dictionary> = Array::new();
+    fn get_frame_history(&mut self, count: i32) -> Array<VarDictionary> {
+        let mut out: Array<VarDictionary> = Array::new();
         if count <= 0 {
             return out;
         }
@@ -418,8 +418,8 @@ impl QEngineDetectorNode {
     }
 
     #[func]
-    fn pop_chord_frames(&mut self) -> Array<Dictionary> {
-        let mut out: Array<Dictionary> = Array::new();
+    fn pop_chord_frames(&mut self) -> Array<VarDictionary> {
+        let mut out: Array<VarDictionary> = Array::new();
         if let Some(detector) = &self.detector {
             for frame in detector.pop_chord_frames(128) {
                 out.push(&chord_frame_dict(frame));
@@ -534,10 +534,10 @@ impl AudioEffectQEngine {
     }
 
     #[func]
-    fn poll_notes(&mut self) -> Array<Dictionary> {
+    fn poll_notes(&mut self) -> Array<VarDictionary> {
         self.ensure_detector();
 
-        let mut out: Array<Dictionary> = Array::new();
+        let mut out: Array<VarDictionary> = Array::new();
         let Some(detector) = &self.detector else {
             return out;
         };
@@ -545,7 +545,7 @@ impl AudioEffectQEngine {
         detector.process();
         let chord = detector.latest_chord();
         for sc in chord.strings {
-            let mut d = Dictionary::new();
+            let mut d = VarDictionary::new();
             d.set("band", sc.band);
             d.set("frequency", sc.pitch_hz as f64);
             d.set("periodicity", sc.confidence as f64);
@@ -565,7 +565,7 @@ impl AudioEffectQEngine {
     }
 
     #[func]
-    fn get_latest_detection(&mut self) -> Dictionary {
+    fn get_latest_detection(&mut self) -> VarDictionary {
         self.ensure_detector();
         match &self.detector {
             Some(detector) => detection_dict(detector.latest_detection()),
@@ -574,9 +574,9 @@ impl AudioEffectQEngine {
     }
 
     #[func]
-    fn pop_note_events(&mut self) -> Array<Dictionary> {
+    fn pop_note_events(&mut self) -> Array<VarDictionary> {
         self.ensure_detector();
-        let mut out: Array<Dictionary> = Array::new();
+        let mut out: Array<VarDictionary> = Array::new();
         if let Some(detector) = &self.detector {
             for ev in detector.pop_note_events(128) {
                 out.push(&note_event_dict(ev));
@@ -586,10 +586,10 @@ impl AudioEffectQEngine {
     }
 
     #[func]
-    fn get_frame_history(&mut self, count: i32) -> Array<Dictionary> {
+    fn get_frame_history(&mut self, count: i32) -> Array<VarDictionary> {
         self.ensure_detector();
 
-        let mut out: Array<Dictionary> = Array::new();
+        let mut out: Array<VarDictionary> = Array::new();
         if count <= 0 {
             return out;
         }
@@ -603,10 +603,10 @@ impl AudioEffectQEngine {
     }
 
     #[func]
-    fn pop_chord_frames(&mut self) -> Array<Dictionary> {
+    fn pop_chord_frames(&mut self) -> Array<VarDictionary> {
         self.ensure_detector();
 
-        let mut out: Array<Dictionary> = Array::new();
+        let mut out: Array<VarDictionary> = Array::new();
         if let Some(detector) = &self.detector {
             for frame in detector.pop_chord_frames(128) {
                 out.push(&chord_frame_dict(frame));
