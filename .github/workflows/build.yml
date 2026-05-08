@@ -1,0 +1,206 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ── Test (Linux only – no Godot needed) ─────────────────────────────────────
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare build directory
+        run: mkdir -p build
+
+      - name: Cache godot-cpp build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps/godotcpp-src
+            build/_deps/godotcpp-build
+            build/_deps/godotcpp-subbuild
+          key: ${{ runner.os }}-godotcpp-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-godotcpp-
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build test executables
+        run: cmake --build build --target qengine_tests qengine_wav_tests --config Release
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Build Linux shared library
+        run: cmake --build build --target godot_qengine --config Release
+
+      - name: Download Godot 4.4.1 headless
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip
+          unzip -q Godot_v4.4.1-stable_linux.x86_64.zip
+          chmod +x Godot_v4.4.1-stable_linux.x86_64
+
+      - name: Import project (register extension + generate .godot/ metadata)
+        run: ./Godot_v4.4.1-stable_linux.x86_64 --headless --path demo/ --import
+        timeout-minutes: 2
+
+      - name: Run demo dataset test (headless)
+        run: |
+          ./Godot_v4.4.1-stable_linux.x86_64 \
+            --headless \
+            --path demo/ \
+            --script res://scripts/dataset_demo_test.gd \
+            --quit-after 180
+
+  # ── Per-platform library builds ──────────────────────────────────────────────
+  build-libs:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            lib_name: libgodot_qengine.so
+            artifact_name: godot-qengine-linux
+          - platform: windows
+            runner: windows-latest
+            lib_name: godot_qengine.dll
+            artifact_name: godot-qengine-windows
+          - platform: macos
+            runner: macos-latest
+            lib_name: libgodot_qengine.dylib
+            artifact_name: godot-qengine-macos
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare build directory
+        run: mkdir -p build
+
+      - name: Cache godot-cpp build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps/godotcpp-src
+            build/_deps/godotcpp-build
+            build/_deps/godotcpp-subbuild
+          key: ${{ runner.os }}-godotcpp-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-godotcpp-
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build release library
+        run: cmake --build build --target godot_qengine --config Release
+
+      - name: Prepare platform artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          # MSVC places output in build/Release/; single-config generators put
+          # it directly in build/.
+          if [ -f "build/Release/${{ matrix.lib_name }}" ]; then
+            cp "build/Release/${{ matrix.lib_name }}" "dist/${{ matrix.lib_name }}"
+          else
+            cp "build/${{ matrix.lib_name }}" "dist/${{ matrix.lib_name }}"
+          fi
+
+      - name: Upload platform artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/
+
+  # ── Package addon zip ────────────────────────────────────────────────────────
+  package-addon:
+    name: Package addon zip
+    runs-on: ubuntu-latest
+    needs: build-libs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download built libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: godot-qengine-*
+          merge-multiple: true
+          path: dist/libs
+
+      - name: Create addon bundle
+        shell: bash
+        run: |
+          mkdir -p package/addons/qengine/bin
+          cp dist/libs/libgodot_qengine.so   package/addons/qengine/bin/
+          cp dist/libs/godot_qengine.dll      package/addons/qengine/bin/
+          cp dist/libs/libgodot_qengine.dylib package/addons/qengine/bin/
+          cp demo/addons/qengine/icon_detector.svg package/addons/qengine/
+          cp demo/addons/qengine/icon_qengine.svg  package/addons/qengine/
+
+          cat > package/addons/qengine/godot-qengine.gdextension <<'EOF'
+          [configuration]
+          entry_symbol = "godot_qengine_init"
+          compatibility_minimum = "4.4"
+
+          [libraries]
+          linux.debug.x86_64     = "res://addons/qengine/bin/libgodot_qengine.so"
+          linux.release.x86_64   = "res://addons/qengine/bin/libgodot_qengine.so"
+          windows.debug.x86_64   = "res://addons/qengine/bin/godot_qengine.dll"
+          windows.release.x86_64 = "res://addons/qengine/bin/godot_qengine.dll"
+          macos.debug            = "res://addons/qengine/bin/libgodot_qengine.dylib"
+          macos.release          = "res://addons/qengine/bin/libgodot_qengine.dylib"
+
+          [icons]
+          AudioEffectQEngine  = "res://addons/qengine/icon_qengine.svg"
+          QEngineDetectorNode = "res://addons/qengine/icon_detector.svg"
+          EOF
+
+          cp README.md package/addons/qengine/README.md
+
+      - name: Create zip artifact
+        shell: bash
+        run: |
+          cd package
+          zip -r ../godot-qengine.zip .
+
+      - name: Upload addon zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-qengine-addon
+          path: godot-qengine.zip
+
+  # ── Publish to GitHub Release on v* tags ─────────────────────────────────────
+  publish-release:
+    name: Publish release asset
+    runs-on: ubuntu-latest
+    needs: package-addon
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packaged addon
+        uses: actions/download-artifact@v4
+        with:
+          name: godot-qengine-addon
+          path: release
+
+      - name: Attach zip to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/godot-qengine.zip
