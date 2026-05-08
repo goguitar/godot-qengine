@@ -164,6 +164,43 @@ std::vector<DetectionResult> BandDetector::process()
     _latest_frame = frame;
     _frame_history.push(frame);
 
+    // ── Build and push ChordFrame (per-string snapshot) ───────────────────────
+    // Every process() call pushes one ChordFrame so GDScript can inspect
+    // which strings were active (per-string chord detection).
+    ChordFrame chord;
+    chord.time_sec = time_sec;
+    chord.level    = rms_level;
+
+    float best_chord_per = 0.0f;
+    for (int b = 0; b < 6; ++b) {
+        const auto& r = results[b];
+        chord.strings[b].band       = b;
+        chord.strings[b].pitch_hz   = r.raw_freq;
+        chord.strings[b].midi_note  = r.midi_note;
+        chord.strings[b].confidence = r.periodicity;
+        chord.strings[b].cents      = r.cents;
+        chord.strings[b].active     = (r.midi_note >= 0 && r.raw_freq > 0.0f
+                                       && r.periodicity >= _min_periodicity);
+
+        // Compute fractional MIDI for the string component.
+        if (r.raw_freq > 0.0f) {
+            q::pitch p{q::frequency{r.raw_freq}};
+            chord.strings[b].midi_float = p.valid() ? static_cast<float>(p.rep) : -1.0f;
+        }
+
+        if (chord.strings[b].active) {
+            ++chord.active_count;
+            if (r.periodicity > best_chord_per) {
+                best_chord_per              = r.periodicity;
+                chord.dominant_band         = b;
+                chord.dominant_midi         = r.midi_note;
+                chord.dominant_pitch_hz     = r.raw_freq;
+                chord.dominant_confidence   = r.periodicity;
+            }
+        }
+    }
+    _chord_queue.push(chord);
+
     return results;
 }
 
@@ -181,4 +218,5 @@ void BandDetector::reset()
     _latest_frame        = DetectionFrame{};
     _frame_history.clear();
     _event_queue.clear();
+    _chord_queue.clear();
 }

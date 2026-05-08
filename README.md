@@ -25,18 +25,22 @@ Guitar/bass audio
 │    6 × cycfi::q::pitch_detector  (one per guitar string)             │
 │    SPSC audio ring buffer  (audio thread → main thread safe)         │
 │                                                                       │
-│  Outputs three data tiers via SPSC ring buffers:                     │
+│  Outputs four data tiers via SPSC ring buffers:                      │
 │    ① latest DetectionFrame  – best-pitch snapshot                    │
 │    ② NoteEvent queue        – onset-triggered events  (SPSC FIFO)   │
 │    ③ frame history          – last 128 frames  (SPSC circular log)   │
+│    ④ ChordFrame queue       – per-string snapshots  (SPSC FIFO)     │
 └─────────────────────────────────────────────────────────────────────┘
-          │ ①              │ ②                   │ ③
-          ▼                ▼                      ▼
+          │ ①              │ ②                   │ ③         │ ④
+          ▼                ▼                      ▼           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  GDScript / gameplay  (main thread)                                   │
 │    Tuner / debug UI     Chart-aware attack       Sustain / bend /    │
 │    reads latest_frame   judgment (pop events,    vibrato analysis    │
 │                         compare to chart note)   (read frame history)│
+│                                                                       │
+│    Per-string chord detection (pop_chord_frames):                    │
+│      Rocksmith-style active/muted per string, dominant/root note     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,18 +52,19 @@ GDScript answers *"does that match what the chart expects?"*
 
 | Layer | Responsibility |
 |---|---|
-| `AudioEffectQEngine` / `BandDetector` | Pitch detection, onset detection, level tracking, SPSC state export |
-| GDScript gameplay | Chart loading, hit windows, scoring, sustain/bend judgment |
+| `AudioEffectQEngine` / `BandDetector` | Pitch detection, onset detection, level tracking, per-string chord data, SPSC state export |
+| GDScript gameplay | Chart loading, hit windows, scoring, sustain/bend judgment, chord matching |
 
 ### Source layout
 
 | Path | Purpose |
 |---|---|
-| `src/band_detector.hpp/.cpp` | `BandDetector`, `SPSCEventQueue<T,N>`, `SPSCFrameHistory<T,N>`, `AudioRingBuffer<N>` |
+| `src/band_detector.hpp/.cpp` | `BandDetector`, `StringComponent`, `ChordFrame`, `NoteEvent`, `DetectionFrame`, `SPSCEventQueue<T,N>`, `SPSCFrameHistory<T,N>`, `AudioRingBuffer<N>` |
 | `src/audio_effect_qengine.hpp/.cpp` | Godot `AudioEffectQEngine` (extends `AudioEffectCapture`) |
 | `src/detector_node.hpp/.cpp` | Godot `QEngineDetectorNode` (extends `Node`) |
 | `src/register_types.cpp` | GDExtension entry point (`godot_qengine_init`) |
 | `tests/test_pitch_detection.cpp` | Standalone C++ tests (no Godot required) |
+| `tests/test_wav_pitch_detection.cpp` | Real-audio WAV tests using GuitarSet dataset |
 | `third_party/q` | cycfi/Q (git submodule) |
 | `third_party/infra` | cycfi/infra (git submodule) |
 
@@ -67,7 +72,7 @@ GDScript answers *"does that match what the chart expects?"*
 
 ## GDScript API
 
-Both `AudioEffectQEngine` and `QEngineDetectorNode` expose the same three-tier
+Both `AudioEffectQEngine` and `QEngineDetectorNode` expose the same four-tier
 analysis API.
 
 ### Tier 1 – Latest detection snapshot
@@ -110,6 +115,76 @@ if valid_frames.size() > 20:
     var avg_hz = valid_frames.reduce(func(a,b): return a + b.pitch_hz, 0.0) \
                  / valid_frames.size()
     check_bend_target(avg_hz, expected_hz)
+```
+
+### Tier 4 – Per-string ChordFrame queue (Rocksmith-style chord detection)
+
+```gdscript
+# Drain the SPSC ChordFrame ring buffer each frame.
+# Each ChordFrame Dictionary:
+#   time_sec             float  – elapsed audio time (s)
+#   level                float  – RMS signal level [0,1]
+#   dominant_band        int    – string index of highest-confidence string; -1 if none
+#   dominant_midi        int    – MIDI note of dominant string; -1 if none
+#   dominant_pitch_hz    float  – Hz of dominant string (0 if none)
+#   dominant_confidence  float  – Q periodicity of dominant string
+#   active_count         int    – number of active strings [0-6]
+#   strings              Array  – 6 per-string StringComponent Dicts (index 0 = low E)
+#
+# Each StringComponent Dictionary:
+#   band        int    – string index [0-5]; 0 = lowest string (E2 in Standard)
+#   pitch_hz    float  – detected frequency (0 if inactive)
+#   midi_float  float  – fractional MIDI; -1 if inactive
+#   midi_note   int    – nearest MIDI note; -1 if inactive
+#   confidence  float  – Q periodicity [0,1]
+#   cents       float  – deviation from nearest semitone [-50, +50]
+#   active      bool   – true when detected above min_periodicity threshold
+
+for cf in fx.pop_chord_frames():
+    var strings: Array = cf.strings
+    for i in 6:
+        var sc = strings[i]
+        if sc.active:
+            print("String %d: %s  %.1f Hz  conf %.0f%%" % [
+                i, note_name(sc.midi_note), sc.pitch_hz, sc.confidence * 100.0
+            ])
+        else:
+            print("String %d: muted" % i)
+    if cf.dominant_midi >= 0:
+        print("Root/dominant: %s" % note_name(cf.dominant_midi))
+```
+
+**Example output for an A major chord (A2 + E3 + A3 + C#4 + E4):**
+
+```
+String 0: muted
+String 1: A2  110.0 Hz  conf 96%
+String 2: E3  165.0 Hz  conf 91%
+String 3: A3  220.0 Hz  conf 94%
+String 4: C#4 277.2 Hz  conf 88%
+String 5: E4  329.6 Hz  conf 93%
+Root/dominant: A3
+```
+
+**Chart-aware chord matching:**
+
+```gdscript
+# Compare all expected chart strings against what was detected.
+func _judge_chord_frame(cf: Dictionary, chart_chord: Dictionary) -> void:
+    var expected_strings: Array = chart_chord.get("strings", [])  # [{midi_note, required}]
+    var strings: Array = cf.get("strings", [])
+    var all_matched := true
+    for i in expected_strings.size():
+        var expected: Dictionary = expected_strings[i]
+        var detected: Dictionary = strings[i] if i < strings.size() else {}
+        if expected.get("required", false):
+            var expected_midi: int = expected.get("midi_note", -1)
+            var detected_midi: int = detected.get("midi_note", -1)
+            var active: bool       = bool(detected.get("active", false))
+            if not active or detected_midi != expected_midi:
+                all_matched = false
+    if all_matched:
+        score_chord_hit(cf.dominant_midi, cf.time_sec)
 ```
 
 ### Legacy per-string tuner API (backwards-compatible)
@@ -186,6 +261,7 @@ the `GuitarIn` bus and shows:
 - latest detection snapshot in the status bar (`get_latest_detection`)
 - onset event log with chart-match result (`pop_note_events`)
 - sustain tracking debug line (`get_frame_history`)
+- per-string chord panel with active/muted status and dominant note (`pop_chord_frames`)
 
 ---
 
@@ -222,6 +298,10 @@ func _process(_delta):
 
     # Tier 3 – sustain / bend / vibrato
     var history = fx.get_frame_history(30)
+
+    # Tier 4 – Rocksmith-style per-string chord detection
+    for cf in fx.pop_chord_frames():
+        _judge_chord_frame(cf, current_chart_chord)
 ```
 
 ### Option B – QEngineDetectorNode (standalone node)
@@ -264,8 +344,9 @@ producer / single-consumer) ring buffers with `std::atomic` head/tail indices:
 | Buffer | Producer | Consumer |
 |---|---|---|
 | `AudioRingBuffer` (PCM samples) | audio thread | main thread (`poll_notes`) |
-| `SPSCEventQueue` (NoteEvents) | main thread analysis | main thread GDScript |
-| `SPSCFrameHistory` (DetectionFrames) | main thread analysis | main thread GDScript |
+| `SPSCEventQueue<NoteEvent>` | main thread analysis | main thread GDScript |
+| `SPSCFrameHistory<DetectionFrame>` | main thread analysis | main thread GDScript |
+| `SPSCEventQueue<ChordFrame>` | main thread analysis | main thread GDScript |
 
 No scene-tree operations are performed from the audio thread.
 

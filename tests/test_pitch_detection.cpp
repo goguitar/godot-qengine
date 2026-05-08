@@ -430,6 +430,180 @@ static void test_detector_analysis_api()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ChordFrame / per-string detection tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generate a mixed mono sine wave from multiple (frequency, amplitude) pairs,
+/// then normalise to peak amplitude 1.0 to avoid clipping.
+static std::vector<float> mixed_sine(
+    std::initializer_list<std::pair<float,float>> components,
+    float sr   = 44100.0f,
+    float secs = 1.0f)
+{
+    std::size_t n = static_cast<std::size_t>(sr * secs);
+    std::vector<float> buf(n, 0.0f);
+    for (const auto& [freq, amp] : components) {
+        for (std::size_t i = 0; i < n; ++i)
+            buf[i] += amp * std::sin(
+                2.0f * std::numbers::pi_v<float> * freq * static_cast<float>(i) / sr);
+    }
+    float peak = 0.0f;
+    for (float s : buf) if (std::abs(s) > peak) peak = std::abs(s);
+    if (peak > 0.0f)
+        for (float& s : buf) s /= peak;
+    return buf;
+}
+
+static void test_chord_frame_api()
+{
+    std::printf("\n-- ChordFrame / per-string detection tests --\n");
+
+    // ── Single active string: E2 (82.41 Hz) exclusively in band 0 range ────────
+    // E2 (82.41 Hz) < band 1 min (106.87 Hz), so only band 0 should detect it.
+    {
+        BandDetector det(44100.0f, STANDARD);
+        auto buf = sine_wave(82.41f);
+        det.push_samples(buf.data(), buf.size());
+        det.process();
+
+        ChordFrame cf{};
+        CHECK(det.pop_chord_frame(cf),              "chord_frame_e2_has_frame");
+        CHECK(cf.strings[0].active,                 "chord_frame_e2_band0_active");
+        CHECK(cf.strings[0].midi_note == 40,         "chord_frame_e2_band0_midi_e2");
+        CHECK(cf.strings[0].pitch_hz > 0.0f,         "chord_frame_e2_band0_pitch_positive");
+        CHECK(cf.strings[0].confidence >= 0.8f,      "chord_frame_e2_band0_confidence");
+        CHECK(std::abs(cf.strings[0].cents) <= 50.0f,"chord_frame_e2_band0_cents_range");
+        CHECK(cf.strings[0].band == 0,               "chord_frame_e2_band0_index");
+
+        // Strings 1-5: band 1 starts at 106.87 Hz > 82.41 Hz → none detect E2.
+        CHECK(!cf.strings[1].active,                 "chord_frame_e2_band1_inactive");
+        CHECK(!cf.strings[2].active,                 "chord_frame_e2_band2_inactive");
+        CHECK(!cf.strings[3].active,                 "chord_frame_e2_band3_inactive");
+        CHECK(!cf.strings[4].active,                 "chord_frame_e2_band4_inactive");
+        CHECK(!cf.strings[5].active,                 "chord_frame_e2_band5_inactive");
+
+        // Dominant note should be band 0 (the only active string).
+        CHECK(cf.dominant_band == 0,                 "chord_frame_e2_dominant_band0");
+        CHECK(cf.dominant_midi == 40,                "chord_frame_e2_dominant_midi_e2");
+        CHECK(cf.dominant_pitch_hz > 0.0f,           "chord_frame_e2_dominant_pitch_positive");
+        CHECK(cf.dominant_confidence >= 0.8f,        "chord_frame_e2_dominant_confidence");
+        CHECK(cf.active_count >= 1,                  "chord_frame_e2_active_count_ge1");
+    }
+
+    // ── Silence: all strings inactive ────────────────────────────────────────
+    {
+        BandDetector det(44100.0f, STANDARD);
+        std::vector<float> silence(44100, 0.0f);
+        det.push_samples(silence.data(), silence.size());
+        det.process();
+
+        ChordFrame cf{};
+        CHECK(det.pop_chord_frame(cf),               "chord_frame_silence_has_frame");
+        CHECK(cf.active_count == 0,                  "chord_frame_silence_active_count_zero");
+        CHECK(cf.dominant_band == -1,                "chord_frame_silence_no_dominant");
+        CHECK(cf.dominant_midi == -1,                "chord_frame_silence_dominant_midi_minus1");
+        for (int b = 0; b < 6; ++b)
+            CHECK(!cf.strings[b].active,             "chord_frame_silence_all_strings_inactive");
+    }
+
+    // ── Queue drains correctly ────────────────────────────────────────────────
+    {
+        BandDetector det(44100.0f, STANDARD);
+        auto buf = sine_wave(82.41f);
+        det.push_samples(buf.data(), buf.size());
+        det.process();
+
+        ChordFrame cf{};
+        CHECK(det.has_chord_frames(),                "chord_frame_queue_nonempty_before_pop");
+        CHECK(det.pop_chord_frame(cf),               "chord_frame_queue_pop_returns_true");
+        CHECK(!det.pop_chord_frame(cf),              "chord_frame_queue_empty_after_drain");
+        CHECK(!det.has_chord_frames(),               "chord_frame_queue_has_none_after_drain");
+    }
+
+    // ── reset() clears the chord queue ───────────────────────────────────────
+    {
+        BandDetector det(44100.0f, STANDARD);
+        auto buf = sine_wave(82.41f);
+        det.push_samples(buf.data(), buf.size());
+        det.process();
+
+        det.reset();
+
+        ChordFrame cf{};
+        CHECK(!det.pop_chord_frame(cf),              "chord_frame_reset_clears_queue");
+        CHECK(!det.has_chord_frames(),               "chord_frame_reset_has_none");
+    }
+
+    // ── StringComponent fields are populated with per-string index ────────────
+    {
+        BandDetector det(44100.0f, STANDARD);
+        auto buf = sine_wave(82.41f);
+        det.push_samples(buf.data(), buf.size());
+        det.process();
+
+        ChordFrame cf{};
+        det.pop_chord_frame(cf);
+
+        // Every string component carries its own band index.
+        for (int b = 0; b < 6; ++b)
+            CHECK(cf.strings[b].band == b,           "chord_frame_string_band_index");
+
+        // Active string (band 0) has valid pitch fields.
+        CHECK(std::abs(cf.strings[0].pitch_hz - 82.41f) < 3.0f,
+                                                     "chord_frame_string0_pitch_hz_accurate");
+        CHECK(cf.strings[0].midi_float >= 39.0f && cf.strings[0].midi_float <= 41.0f,
+                                                     "chord_frame_string0_midi_float_range");
+    }
+
+    // ── Mixed-sine: band 0 detection still works under two-tone input ─────────
+    // Q's autocorrelation pitch detector cannot cleanly separate two simultaneous
+    // pitches from a single mixed signal — that requires separate DSP channels
+    // (which is the purpose of BandDetector's 6 band-specific detectors).
+    // What we CAN verify: the per-string architecture reports data for every call
+    // and band 0 still detects a low-E pitch (≈ E2/F2) even under interference.
+    // E2 = 82.41 Hz (band 0 range 80.11–164.82).
+    // C5 = 523.25 Hz (above band 4 max 493.88, exclusive to band 5 range 320.25–659.26).
+    {
+        BandDetector det(44100.0f, STANDARD);
+        auto buf = mixed_sine({{82.41f, 0.5f}, {523.25f, 0.5f}});
+        det.push_samples(buf.data(), buf.size());
+        det.process();
+
+        ChordFrame cf{};
+        CHECK(det.pop_chord_frame(cf),               "chord_two_string_has_frame");
+        // Band 0 should detect a pitch close to E2/F2 (autocorrelation may
+        // slightly shift frequency due to beating with C5).
+        CHECK(cf.strings[0].active,                  "chord_two_string_band0_low_active");
+        CHECK(cf.strings[0].midi_note >= 38 && cf.strings[0].midi_note <= 43,
+                                                     "chord_two_string_band0_midi_near_e2");
+        CHECK(cf.active_count >= 1,                  "chord_two_string_active_count_ge1");
+        CHECK(cf.dominant_band >= 0,                 "chord_two_string_dominant_set");
+        CHECK(cf.dominant_midi >= 0,                 "chord_two_string_dominant_midi_valid");
+
+        // Verify that the band 5 StringComponent still carries its band index
+        // even if it is not active in this mixed-signal scenario.
+        CHECK(cf.strings[5].band == 5,               "chord_two_string_band5_index_correct");
+    }
+
+    // ── process() always pushes exactly one ChordFrame per call ──────────────
+    {
+        BandDetector det(44100.0f, STANDARD);
+        auto buf = sine_wave(82.41f);
+
+        // Two process() calls → two ChordFrames.
+        det.push_samples(buf.data(), buf.size());
+        det.process();
+        det.push_samples(buf.data(), buf.size());
+        det.process();
+
+        ChordFrame cf{};
+        int count = 0;
+        while (det.pop_chord_frame(cf)) ++count;
+        CHECK(count == 2,                            "chord_frame_two_calls_two_frames");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // main
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -448,6 +622,8 @@ int main()
 
     std::printf("\n-- Analysis API integration tests --\n");
     test_detector_analysis_api();
+
+    test_chord_frame_api();
 
     std::printf("\ntest result: %s.  %d passed; %d failed\n",
         g_fail == 0 ? "ok" : "FAILED",

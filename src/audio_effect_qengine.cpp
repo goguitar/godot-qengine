@@ -124,6 +124,37 @@ Dictionary event_to_dict(const NoteEvent& ev)
     d["level"]      = static_cast<double>(ev.level);
     return d;
 }
+
+Dictionary string_component_to_dict(const StringComponent& sc)
+{
+    Dictionary d;
+    d["band"]       = sc.band;
+    d["pitch_hz"]   = static_cast<double>(sc.pitch_hz);
+    d["midi_float"] = static_cast<double>(sc.midi_float);
+    d["midi_note"]  = sc.midi_note;
+    d["confidence"] = static_cast<double>(sc.confidence);
+    d["cents"]      = static_cast<double>(sc.cents);
+    d["active"]     = sc.active;
+    return d;
+}
+
+Dictionary chord_frame_to_dict(const ChordFrame& cf)
+{
+    Dictionary d;
+    d["time_sec"]            = cf.time_sec;
+    d["level"]               = static_cast<double>(cf.level);
+    d["dominant_band"]       = cf.dominant_band;
+    d["dominant_midi"]       = cf.dominant_midi;
+    d["dominant_pitch_hz"]   = static_cast<double>(cf.dominant_pitch_hz);
+    d["dominant_confidence"] = static_cast<double>(cf.dominant_confidence);
+    d["active_count"]        = cf.active_count;
+    Array strings;
+    strings.resize(6);
+    for (int b = 0; b < 6; ++b)
+        strings[b] = string_component_to_dict(cf.strings[b]);
+    d["strings"] = strings;
+    return d;
+}
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,6 +171,7 @@ void AudioEffectQEngine::_bind_methods()
     ClassDB::bind_method(D_METHOD("get_latest_detection"),        &AudioEffectQEngine::get_latest_detection);
     ClassDB::bind_method(D_METHOD("pop_note_events"),             &AudioEffectQEngine::pop_note_events);
     ClassDB::bind_method(D_METHOD("get_frame_history", "count"),  &AudioEffectQEngine::get_frame_history);
+    ClassDB::bind_method(D_METHOD("pop_chord_frames"),            &AudioEffectQEngine::pop_chord_frames);
 
     ClassDB::bind_method(D_METHOD("set_sample_rate",      "v"), &AudioEffectQEngine::set_sample_rate);
     ClassDB::bind_method(D_METHOD("get_sample_rate"),          &AudioEffectQEngine::get_sample_rate);
@@ -253,6 +285,21 @@ Array AudioEffectQEngine::get_frame_history(int count) const
     const std::size_t got = detector->get_frame_history(tmp.data(), n);
     for (std::size_t i = 0; i < got; ++i)
         out.append(frame_to_dict(tmp[i]));
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// pop_chord_frames  – drain per-string chord frame queue
+// ─────────────────────────────────────────────────────────────────────────────
+
+Array AudioEffectQEngine::pop_chord_frames()
+{
+    Array out;
+    if (!detector)
+        return out;
+    ChordFrame cf;
+    while (detector->pop_chord_frame(cf))
+        out.append(chord_frame_to_dict(cf));
     return out;
 }
 

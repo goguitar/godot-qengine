@@ -64,6 +64,15 @@ public:
     /// Intended for: attack detection in chart-guided gameplay.
     Array pop_note_events();
 
+    /// Pop all pending ChordFrames from the per-string chord queue.
+    /// Each frame Dictionary has: time_sec, level, dominant_band,
+    ///   dominant_midi, dominant_pitch_hz, dominant_confidence,
+    ///   active_count, strings (Array of 6 per-string Dicts).
+    /// Each per-string Dict: band, pitch_hz, midi_float, midi_note,
+    ///   confidence, cents, active.
+    /// Intended for: Rocksmith-style per-string chord detection.
+    Array pop_chord_frames();
+
     /// Return up to count recent DetectionFrames (newest first).
     /// Same keys as get_latest_detection() minus onset.
     /// Intended for: sustain checking, bend, vibrato analysis.

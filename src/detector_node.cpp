@@ -114,6 +114,37 @@ Dictionary event_to_dict(const NoteEvent& ev)
     d["level"]      = static_cast<double>(ev.level);
     return d;
 }
+
+Dictionary string_component_to_dict(const StringComponent& sc)
+{
+    Dictionary d;
+    d["band"]       = sc.band;
+    d["pitch_hz"]   = static_cast<double>(sc.pitch_hz);
+    d["midi_float"] = static_cast<double>(sc.midi_float);
+    d["midi_note"]  = sc.midi_note;
+    d["confidence"] = static_cast<double>(sc.confidence);
+    d["cents"]      = static_cast<double>(sc.cents);
+    d["active"]     = sc.active;
+    return d;
+}
+
+Dictionary chord_frame_to_dict(const ChordFrame& cf)
+{
+    Dictionary d;
+    d["time_sec"]            = cf.time_sec;
+    d["level"]               = static_cast<double>(cf.level);
+    d["dominant_band"]       = cf.dominant_band;
+    d["dominant_midi"]       = cf.dominant_midi;
+    d["dominant_pitch_hz"]   = static_cast<double>(cf.dominant_pitch_hz);
+    d["dominant_confidence"] = static_cast<double>(cf.dominant_confidence);
+    d["active_count"]        = cf.active_count;
+    Array strings;
+    strings.resize(6);
+    for (int b = 0; b < 6; ++b)
+        strings[b] = string_component_to_dict(cf.strings[b]);
+    d["strings"] = strings;
+    return d;
+}
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +163,7 @@ void QEngineDetectorNode::_bind_methods()
     ClassDB::bind_method(D_METHOD("get_latest_detection"),        &QEngineDetectorNode::get_latest_detection);
     ClassDB::bind_method(D_METHOD("pop_note_events"),             &QEngineDetectorNode::pop_note_events);
     ClassDB::bind_method(D_METHOD("get_frame_history", "count"),  &QEngineDetectorNode::get_frame_history);
+    ClassDB::bind_method(D_METHOD("pop_chord_frames"),            &QEngineDetectorNode::pop_chord_frames);
 
     ClassDB::bind_method(D_METHOD("set_sample_rate",      "v"), &QEngineDetectorNode::set_sample_rate);
     ClassDB::bind_method(D_METHOD("get_sample_rate"),           &QEngineDetectorNode::get_sample_rate);
@@ -258,6 +290,17 @@ Array QEngineDetectorNode::pop_note_events()
     NoteEvent ev;
     while (detector->pop_event(ev))
         out.append(event_to_dict(ev));
+    return out;
+}
+
+Array QEngineDetectorNode::pop_chord_frames()
+{
+    Array out;
+    if (!detector)
+        return out;
+    ChordFrame cf;
+    while (detector->pop_chord_frame(cf))
+        out.append(chord_frame_to_dict(cf));
     return out;
 }
 

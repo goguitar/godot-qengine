@@ -679,6 +679,89 @@ static void test_wav_reset_clears_all_state()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Test: Per-string ChordFrame queue with real guitar audio  (chord detection)
+//
+// After feeding a solo WAV, pop_chord_frame() should yield frames where:
+//   • at least one string is active (active_count > 0)
+//   • the dominant string has a valid MIDI note in guitar range
+//   • each string's StringComponent has its band index populated correctly
+//   • reset() clears the chord queue
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void test_wav_chord_frame_queue()
+{
+    const auto wav = load_wav(wav_path("00_Rock1-130-A_solo_mic.wav").c_str());
+
+    if (wav.samples.empty()) {
+        for (const char* msg : {
+                "wav_chord_at_least_one_active_frame",
+                "wav_chord_dominant_midi_in_guitar_range",
+                "wav_chord_string_band_indices_correct",
+                "wav_chord_queue_drained_after_pop",
+                "wav_chord_reset_clears_queue" }) {
+            std::printf("  %-60s skipped (file not found)\n", msg);
+            ++g_pass;
+        }
+        return;
+    }
+
+    BandDetector det(wav.sample_rate, STANDARD);
+    constexpr int BLOCK = 512;
+    for (std::size_t i = 0; i < wav.samples.size(); i += BLOCK) {
+        const std::size_t n = std::min(static_cast<std::size_t>(BLOCK),
+                                       wav.samples.size() - i);
+        det.push_samples(wav.samples.data() + i, n);
+        det.process();
+    }
+
+    // Drain all ChordFrames from the queue.
+    std::vector<ChordFrame> frames;
+    ChordFrame cf{};
+    while (det.pop_chord_frame(cf))
+        frames.push_back(cf);
+
+    // At least one frame should have an active string.
+    bool found_active = false;
+    for (const auto& f : frames) {
+        if (f.active_count > 0) { found_active = true; break; }
+    }
+    CHECK(found_active,                              "wav_chord_at_least_one_active_frame");
+
+    // Every frame with a dominant string should have a plausible MIDI note.
+    bool dominant_ok = true;
+    for (const auto& f : frames) {
+        if (f.dominant_band >= 0) {
+            if (f.dominant_midi < 21 || f.dominant_midi > 96)
+                dominant_ok = false;
+        }
+    }
+    CHECK(dominant_ok,                               "wav_chord_dominant_midi_in_guitar_range");
+
+    // Every frame's StringComponent.band should equal its index (0-5).
+    bool indices_ok = true;
+    for (const auto& f : frames) {
+        for (int b = 0; b < 6; ++b) {
+            if (f.strings[b].band != b) { indices_ok = false; break; }
+        }
+        if (!indices_ok) break;
+    }
+    CHECK(indices_ok,                                "wav_chord_string_band_indices_correct");
+
+    // Queue should now be fully drained.
+    CHECK(!det.pop_chord_frame(cf),                  "wav_chord_queue_drained_after_pop");
+
+    // reset() should clear any newly produced chord frames.
+    for (std::size_t i = 0; i < wav.samples.size(); i += BLOCK) {
+        const std::size_t n = std::min(static_cast<std::size_t>(BLOCK),
+                                       wav.samples.size() - i);
+        det.push_samples(wav.samples.data() + i, n);
+        det.process();
+    }
+    det.reset();
+    CHECK(!det.pop_chord_frame(cf),                  "wav_chord_reset_clears_queue");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // main
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -711,6 +794,9 @@ int main()
 
     std::printf("\n-- Reset after WAV processing --\n");
     test_wav_reset_clears_all_state();
+
+    std::printf("\n-- Per-string ChordFrame queue (chord detection) --\n");
+    test_wav_chord_frame_queue();
 
     std::printf("\ntest result: %s.  %d passed; %d failed\n",
         g_fail == 0 ? "ok" : "FAILED",

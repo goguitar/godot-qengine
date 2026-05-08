@@ -63,6 +63,13 @@ public:
     /// Each event Dictionary: time_sec, pitch_hz, midi_note, confidence, level.
     Array pop_note_events();
 
+    /// Pop all pending ChordFrames from the per-string chord queue.
+    /// Each frame Dictionary: time_sec, level, dominant_band, dominant_midi,
+    ///   dominant_pitch_hz, dominant_confidence, active_count,
+    ///   strings (Array of 6 per-string Dicts with band, pitch_hz, midi_float,
+    ///   midi_note, confidence, cents, active).
+    Array pop_chord_frames();
+
     /// Return up to count recent DetectionFrames (newest first).
     Array get_frame_history(int count) const;
 

@@ -85,6 +85,50 @@ struct NoteEvent {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// StringComponent – per-string detection snapshot within a ChordFrame.
+//
+// One component per guitar string (index 0 = lowest / heaviest string).
+// 'active' is true when the string has a valid detection that meets the
+// minimum periodicity threshold.  Inactive strings report raw_freq == 0,
+// midi_note == -1.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct StringComponent {
+    int   band        = -1;    ///< string index [0-5]; 0 = lowest string (E2)
+    float pitch_hz    = 0.0f;  ///< detected frequency (0 if inactive)
+    float midi_float  = -1.0f; ///< fractional MIDI (e.g. 57.35); -1 if inactive
+    int   midi_note   = -1;    ///< nearest integer MIDI [0,127]; -1 if inactive
+    float confidence  = 0.0f;  ///< Q periodicity [0,1]
+    float cents       = 0.0f;  ///< deviation from nearest semitone in cents [-50, +50]
+    bool  active      = false; ///< true when pitch detected above min_periodicity threshold
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ChordFrame – per-process() snapshot of all six string detections.
+//
+// Captures the full Rocksmith-style chord state for one analysis block:
+//   • strings[0..5] – individual per-string components (active/inactive, pitch,
+//     MIDI, confidence, cents).
+//   • dominant_* – the highest-confidence active string, used as the root note
+//     for chord-aware chart matching.
+//   • active_count – number of strings exceeding the periodicity threshold.
+//
+// Pushed to the SPSC chord queue on every process() call.  GDScript drains
+// pop_chord_frames() each gameplay frame to consume these snapshots.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct ChordFrame {
+    double          time_sec             = 0.0;   ///< elapsed audio time (s)
+    float           level                = 0.0f;  ///< RMS signal level [0,1]
+    StringComponent strings[6];                   ///< per-string components [0=low..5=high]
+    int             dominant_band        = -1;    ///< string index of root/dominant; -1 if none
+    int             dominant_midi        = -1;    ///< MIDI note of dominant string; -1 if none
+    float           dominant_pitch_hz    = 0.0f;  ///< Hz of dominant string (0 if none)
+    float           dominant_confidence  = 0.0f;  ///< Q periodicity of dominant string
+    int             active_count         = 0;     ///< number of active strings [0-6]
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AudioRingBuffer – lock-free single-producer / single-consumer circular buffer
 //                   for float audio samples.
 //
@@ -301,6 +345,8 @@ public:
     static constexpr std::size_t FRAME_HISTORY_SIZE      = 128;
     /// Onset event queue: up to 32 pending events before oldest are dropped.
     static constexpr std::size_t EVENT_QUEUE_SIZE        = 32;
+    /// Chord frame queue: up to 128 per-string snapshots before oldest dropped.
+    static constexpr std::size_t CHORD_QUEUE_SIZE        = 128;
     /// Minimum samples between consecutive onset events (~46 ms at 44100 Hz).
     static constexpr std::size_t ONSET_COOLDOWN_SAMPLES  = 2048;
 
@@ -345,6 +391,16 @@ public:
         return _frame_history.read_newest(out, count);
     }
 
+    // ── Chord / per-string API ────────────────────────────────────────────
+
+    /// Pop the oldest pending ChordFrame (SPSC FIFO).
+    /// A ChordFrame is pushed on every process() call and contains the
+    /// full per-string detection snapshot for that analysis block.
+    /// Returns false when the queue is empty.  Call in a loop each frame.
+    bool pop_chord_frame(ChordFrame& out) noexcept { return _chord_queue.pop(out); }
+
+    bool has_chord_frames() const noexcept { return !_chord_queue.empty(); }
+
     // ── Configuration ─────────────────────────────────────────────────────
 
     void  set_min_periodicity(float v) { _min_periodicity = std::max(0.0f, std::min(1.0f, v)); }
@@ -363,4 +419,5 @@ private:
 
     SPSCFrameHistory<DetectionFrame, FRAME_HISTORY_SIZE> _frame_history;
     SPSCEventQueue<NoteEvent,        EVENT_QUEUE_SIZE>    _event_queue;
+    SPSCEventQueue<ChordFrame,       CHORD_QUEUE_SIZE>    _chord_queue;
 };
