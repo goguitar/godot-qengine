@@ -42,12 +42,27 @@ jobs:
         run: ./Godot_v4.4.1-stable_linux.x86_64 --headless --path demo/ --import
         timeout-minutes: 2
 
+      - name: Run demo scene smoke test (default bus layout)
+        run: |
+          ./Godot_v4.4.1-stable_linux.x86_64 \
+            --headless \
+            --path demo/ \
+            --quit-after 30
+
       - name: Run demo dataset test (headless)
         run: |
           ./Godot_v4.4.1-stable_linux.x86_64 \
             --headless \
             --path demo/ \
             --script res://scripts/dataset_demo_test.gd \
+            --quit-after 180
+
+      - name: Run demo CI chord/per-string test (headless)
+        run: |
+          ./Godot_v4.4.1-stable_linux.x86_64 \
+            --headless \
+            --path demo/ \
+            --script res://scripts/ci_headless_test.gd \
             --quit-after 180
 
   # ── Per-platform library builds ──────────────────────────────────────────────

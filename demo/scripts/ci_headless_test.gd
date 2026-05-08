@@ -24,6 +24,10 @@ const NOTE_INDEX := {
 
 func _init() -> void:
 	await process_frame
+	if not _has_default_demo_buses():
+		printerr("FAIL: default_bus_layout is missing required buses (GuitarIn/Playback)")
+		quit(1)
+		return
 
 	for cls in ["QEngineDetectorNode", "AudioEffectQEngine"]:
 		if not ClassDB.class_exists(cls):
@@ -318,3 +322,6 @@ func _load_wav_samples(path: String, max_seconds: float) -> Dictionary:
 		"sample_rate": float(sample_rate),
 		"samples": samples,
 	}
+
+func _has_default_demo_buses() -> bool:
+	return AudioServer.get_bus_index("GuitarIn") >= 0 and AudioServer.get_bus_index("Playback") >= 0

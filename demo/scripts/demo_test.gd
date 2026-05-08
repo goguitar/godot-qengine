@@ -19,9 +19,9 @@ const NOTE_NAMES := ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#",
 @onready var _confidence: Label = $RootMargin/RootVBox/InfoCard/InfoVBox/Confidence
 @onready var _status_bar: Label = $RootMargin/RootVBox/StatusBar
 
-@onready var _detector_node: QEngineDetectorNode = $QEngineDetectorNode
+@onready var _detector_node = $QEngineDetectorNode
 
-var _audio_effect: AudioEffectQEngine = null
+var _audio_effect = null
 var _rustortion_effect = null
 var _dataset_player: AudioStreamPlayer = null
 var _monitor_player: AudioStreamPlayer = null
@@ -107,10 +107,10 @@ func _apply_detector_tuning() -> void:
 	var tuning: String = _selected_tuning()
 	if _instrument == "Bass" and tuning != "DropD":
 		tuning = "Standard"
-	if _audio_effect:
-		_audio_effect.tuning = tuning
-	if _detector_node:
-		_detector_node.tuning = tuning
+	if _audio_effect and _audio_effect.has_method("set"):
+		_audio_effect.set("tuning", tuning)
+	if _detector_node and _detector_node.has_method("set"):
+		_detector_node.set("tuning", tuning)
 		_detector_node.init_detector()
 
 func _ensure_audio_effect_on_capture_bus() -> void:
@@ -121,7 +121,7 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 
 	for i in AudioServer.get_bus_effect_count(bus_idx):
 		var fx := AudioServer.get_bus_effect(bus_idx, i)
-		if fx is AudioEffectQEngine:
+		if fx and fx.has_method("poll_notes"):
 			_audio_effect = fx
 		if _rustortion_effect == null and fx and fx.is_class("AudioEffectRustortion"):
 			_rustortion_effect = fx
@@ -131,13 +131,17 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 		_ensure_rustortion_on_bus(bus_idx)
 		return
 
-	var new_fx := ClassDB.instantiate("AudioEffectQEngine") as AudioEffectQEngine
+	var new_fx: Object = ClassDB.instantiate("AudioEffectQEngine")
 	if new_fx == null:
 		_status_bar.text = "Status: failed to create AudioEffectQEngine"
 		return
-	new_fx.tuning = _selected_tuning()
-	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
-	_audio_effect = new_fx
+	if new_fx is AudioEffect:
+		new_fx.set("tuning", _selected_tuning())
+		AudioServer.add_bus_effect(bus_idx, new_fx, 0)
+		_audio_effect = new_fx
+	else:
+		_status_bar.text = "Status: AudioEffectQEngine is not an AudioEffect on this build"
+		return
 	_ensure_rustortion_on_bus(bus_idx)
 
 func _ensure_rustortion_on_bus(bus_idx: int) -> void:
