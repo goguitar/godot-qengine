@@ -292,6 +292,144 @@ static void test_em_chord()
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SPSC ring buffer unit tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void test_spsc_event_queue()
+{
+    SPSCEventQueue<NoteEvent, 4> q;
+
+    CHECK(q.empty(),                          "spsc_event_queue_initially_empty");
+    CHECK(q.size() == 0,                      "spsc_event_queue_initial_size_zero");
+
+    NoteEvent a{1.0, 100.0f, 40, 0.9f, 0.5f};
+    NoteEvent b{2.0, 200.0f, 52, 0.8f, 0.4f};
+    NoteEvent c{3.0, 300.0f, 64, 0.7f, 0.3f};
+
+    CHECK(q.push(a),                          "spsc_event_queue_push_a");
+    CHECK(q.push(b),                          "spsc_event_queue_push_b");
+    CHECK(q.push(c),                          "spsc_event_queue_push_c");
+    CHECK(q.size() == 3,                      "spsc_event_queue_size_three");
+    CHECK(!q.empty(),                         "spsc_event_queue_not_empty");
+
+    // Fill to capacity (4)
+    NoteEvent d{4.0, 400.0f, 76, 0.6f, 0.2f};
+    CHECK(q.push(d),                          "spsc_event_queue_push_d_to_capacity");
+    // Now full – next push should drop
+    NoteEvent e{5.0, 500.0f, 88, 0.5f, 0.1f};
+    CHECK(!q.push(e),                         "spsc_event_queue_push_drops_when_full");
+
+    // Pop FIFO order: a first
+    NoteEvent out{};
+    CHECK(q.pop(out),                         "spsc_event_queue_pop_a_returns_true");
+    CHECK(out.midi_note == 40,                "spsc_event_queue_pop_a_fifo_order");
+    CHECK(q.pop(out),                         "spsc_event_queue_pop_b_returns_true");
+    CHECK(out.midi_note == 52,                "spsc_event_queue_pop_b_fifo_order");
+    CHECK(q.pop(out),                         "spsc_event_queue_pop_c_returns_true");
+    CHECK(out.midi_note == 64,                "spsc_event_queue_pop_c_fifo_order");
+    CHECK(q.pop(out),                         "spsc_event_queue_pop_d_returns_true");
+    CHECK(out.midi_note == 76,                "spsc_event_queue_pop_d_fifo_order");
+    CHECK(!q.pop(out),                        "spsc_event_queue_empty_pop_returns_false");
+    CHECK(q.empty(),                          "spsc_event_queue_empty_after_drain");
+
+    // clear()
+    q.push(a);
+    q.push(b);
+    q.clear();
+    CHECK(q.empty(),                          "spsc_event_queue_clear_empties");
+}
+
+static void test_spsc_frame_history()
+{
+    SPSCFrameHistory<DetectionFrame, 4> h;
+
+    CHECK(h.size() == 0,                      "spsc_frame_history_initial_size_zero");
+
+    DetectionFrame f1, f2, f3, f4, f5;
+    f1.midi_note = 40;  f1.pitch_hz = 82.0f;
+    f2.midi_note = 45;  f2.pitch_hz = 110.0f;
+    f3.midi_note = 50;  f3.pitch_hz = 147.0f;
+    f4.midi_note = 55;  f4.pitch_hz = 196.0f;
+    f5.midi_note = 59;  f5.pitch_hz = 247.0f;  // oldest will be overwritten
+
+    h.push(f1);
+    h.push(f2);
+    h.push(f3);
+    CHECK(h.size() == 3,                      "spsc_frame_history_size_three");
+
+    DetectionFrame out[4]{};
+    std::size_t got = h.read_newest(out, 3);
+    CHECK(got == 3,                           "spsc_frame_history_read_three");
+    CHECK(out[0].midi_note == 50,             "spsc_frame_history_newest_is_f3");
+    CHECK(out[1].midi_note == 45,             "spsc_frame_history_second_is_f2");
+    CHECK(out[2].midi_note == 40,             "spsc_frame_history_third_is_f1");
+
+    // Push to full capacity
+    h.push(f4);
+    CHECK(h.size() == 4,                      "spsc_frame_history_size_four");
+
+    // Push beyond capacity: f1 (oldest) is overwritten
+    h.push(f5);
+    got = h.read_newest(out, 4);
+    CHECK(got == 4,                           "spsc_frame_history_still_four_after_overflow");
+    CHECK(out[0].midi_note == 59,             "spsc_frame_history_newest_is_f5");
+    CHECK(out[3].midi_note == 45,             "spsc_frame_history_oldest_is_f2_after_overwrite");
+
+    // Non-destructive: reading again gives the same data
+    DetectionFrame out2[4]{};
+    got = h.read_newest(out2, 4);
+    CHECK(got == 4,                           "spsc_frame_history_read_again_same_count");
+    CHECK(out2[0].midi_note == 59,            "spsc_frame_history_read_again_same_newest");
+
+    h.clear();
+    CHECK(h.size() == 0,                      "spsc_frame_history_clear");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BandDetector latest_frame / pop_event / get_frame_history integration tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void test_detector_analysis_api()
+{
+    // Feed one second of E2 (82.41 Hz) through band 0 of a Standard detector.
+    BandDetector det(44100.0f, STANDARD);
+    auto buf = sine_wave(82.41f);
+    det.push_samples(buf.data(), buf.size());
+    det.process();
+
+    // latest_frame() should report a valid detection.
+    const DetectionFrame& f = det.latest_frame();
+    CHECK(f.pitch_valid,                      "detector_latest_frame_pitch_valid");
+    CHECK(std::abs(f.pitch_hz - 82.41f) < 3.0f, "detector_latest_frame_pitch_hz");
+    CHECK(f.midi_note == 40,                  "detector_latest_frame_midi_note_e2");
+    CHECK(f.confidence >= 0.8f,               "detector_latest_frame_confidence");
+    CHECK(f.level > 0.0f,                     "detector_latest_frame_level_nonzero");
+    CHECK(f.time_sec > 0.0,                   "detector_latest_frame_time_nonzero");
+
+    // get_frame_history() should have at least 1 entry (newest first).
+    DetectionFrame hist[4]{};
+    std::size_t got = det.get_frame_history(hist, 4);
+    CHECK(got >= 1,                           "detector_frame_history_nonempty");
+    CHECK(hist[0].pitch_valid,                "detector_frame_history_newest_valid");
+
+    // First process() call on fresh detector triggers onset.
+    CHECK(det.has_events(),                   "detector_has_onset_event");
+    NoteEvent ev{};
+    CHECK(det.pop_event(ev),                  "detector_pop_event_returns_true");
+    CHECK(ev.midi_note == 40,                 "detector_event_midi_note_e2");
+    CHECK(ev.pitch_hz > 0.0f,                 "detector_event_pitch_hz_positive");
+    CHECK(!det.has_events(),                  "detector_event_queue_empty_after_pop");
+
+    // reset() clears all state.
+    det.reset();
+    const DetectionFrame& fr = det.latest_frame();
+    CHECK(!fr.pitch_valid,                    "detector_reset_clears_latest_frame");
+    CHECK(!det.has_events(),                  "detector_reset_clears_event_queue");
+    DetectionFrame hist2[4]{};
+    CHECK(det.get_frame_history(hist2, 4) == 0, "detector_reset_clears_frame_history");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // main
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -303,6 +441,13 @@ int main()
     test_fretted_notes();
     test_alternative_tunings();
     test_em_chord();
+
+    std::printf("\n-- SPSC ring buffer tests --\n");
+    test_spsc_event_queue();
+    test_spsc_frame_history();
+
+    std::printf("\n-- Analysis API integration tests --\n");
+    test_detector_analysis_api();
 
     std::printf("\ntest result: %s.  %d passed; %d failed\n",
         g_fail == 0 ? "ok" : "FAILED",

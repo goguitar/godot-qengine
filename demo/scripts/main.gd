@@ -1,8 +1,14 @@
 ## main.gd – Demo scene controller for QEngine guitar pitch detection.
-## Displays per-string detection results in a grid of UI labels.
 ##
-## The C++ layer returns raw Q pitch-detector results (frequency + periodicity).
-## This script handles tuning definitions and note-name mapping.
+## Architecture v2: the C++ AudioEffect is an analysis engine, not a gameplay
+## judge.  This script demonstrates the three-tier consumption model:
+##
+##   1. get_latest_detection() → tuner/debug UI (reads best pitch each frame)
+##   2. pop_note_events()      → chart-aware attack judgment (onset events)
+##   3. get_frame_history(n)   → sustain / bend / vibrato tracking
+##
+## GDScript owns all chart-aware hit/miss logic; the C++ layer only reports
+## what the audio analysis observed.
 extends Control
 
 # ── Tuning definitions ────────────────────────────────────────────────────────
@@ -77,10 +83,14 @@ static func midi_to_note_display(midi: int) -> String:
 # ── Scene references ──────────────────────────────────────────────────────────
 
 const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
-## Only display detections with periodicity >= this threshold.
+## Only display detections with confidence >= this threshold.
 const MIN_CONFIDENCE       := 0.85
 ## Project sample rate (must match project.godot audio/driver/mix_rate).
 const SAMPLE_RATE          := 48000.0
+## Chart hit window: accept onsets within ±HIT_WINDOW_SEC of a chart note.
+const HIT_WINDOW_SEC       := 0.120
+## Sustain history depth: read last N frames for sustain/bend checking.
+const HISTORY_FRAMES       := 30
 
 @onready var _mode_opt:      OptionButton   = $VBox/ModeHBox/ModeOption
 @onready var _tuning_opt:    OptionButton   = $VBox/TuningHBox/TuningOption
@@ -104,6 +114,13 @@ var _dataset_index: int = 0
 
 ## 0 = Playback (dataset files routed through GuitarIn), 1 = Input (live mic).
 var _mode: int = 0
+
+# ── Minimal chart for demo purposes ──────────────────────────────────────────
+# Each entry: { time_sec, midi_note, duration_sec }
+# In a real game these come from a parsed chart file.
+var _demo_chart: Array = []
+var _song_time: float = 0.0
+var _last_event_log: String = ""
 
 func _ready() -> void:
 	# Populate mode selector – Playback first so dataset runs on launch.
@@ -142,7 +159,6 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 		var fx := AudioServer.get_bus_effect(bus_idx, i)
 		if fx and fx.has_method("poll_notes"):
 			_audio_effect = fx
-			# Always apply current configuration so detection works immediately.
 			_audio_effect.set("band_ranges",     TUNING_DATA[TUNING_NAMES[_tuning_opt.selected]])
 			_audio_effect.set("sample_rate",     SAMPLE_RATE)
 			_audio_effect.set("min_periodicity", MIN_CONFIDENCE)
@@ -217,11 +233,11 @@ func _setup_dataset_playback() -> void:
 
 	if _dataset_player == null:
 		_dataset_player = AudioStreamPlayer.new()
-		_dataset_player.bus = "GuitarIn"    # routes through AudioEffectQEngine for detection
+		_dataset_player.bus = "GuitarIn"
 		add_child(_dataset_player)
 	if _dataset_monitor_player == null:
 		_dataset_monitor_player = AudioStreamPlayer.new()
-		_dataset_monitor_player.bus = "Playback"  # dedicated Playback bus → Master for output
+		_dataset_monitor_player.bus = "Playback"
 		add_child(_dataset_monitor_player)
 
 	_dataset_player.stream = stream
@@ -238,9 +254,27 @@ func _load_wav(path: String) -> AudioStreamWAV:
 		return ResourceLoader.load(path, "AudioStreamWAV") as AudioStreamWAV
 	return AudioStreamWAV.load_from_file(path)
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_song_time += delta
+
 	if _audio_effect:
+		# ── Tier 1: per-string tuner UI via legacy poll_notes() ──────────────
 		_on_notes_detected(_audio_effect.poll_notes())
+
+		# ── Tier 2: chart-aware attack judgment via SPSC onset event queue ───
+		# pop_note_events() drains the SPSC onset ring buffer filled by the
+		# C++ analysis layer.  We compare each event to the active chart note.
+		var events: Array = _audio_effect.pop_note_events()
+		for ev in events:
+			_judge_note_event(ev)
+
+		# ── Tier 3: sustain / bend tracking via frame history ─────────────────
+		# get_frame_history() returns the last N DetectionFrames (newest first)
+		# from the SPSC circular history buffer.  Use this to check whether the
+		# player is sustaining the expected pitch after an attack was confirmed.
+		# (Shown here as a debug line; a real game would apply scoring logic.)
+		var history: Array = _audio_effect.get_frame_history(HISTORY_FRAMES)
+		_update_sustain_debug(history)
 
 	# Advance dataset playlist when current track ends (Playback mode only).
 	if _mode == 0 and _dataset_player and _dataset_files.size() > 1 and not _dataset_player.playing:
@@ -254,10 +288,61 @@ func _process(_delta: float) -> void:
 			if _dataset_monitor_player:
 				_dataset_monitor_player.play()
 
+# ── Chart-aware judgment helpers ──────────────────────────────────────────────
+
+## Judge one onset event against the demo chart.
+## In a real game _demo_chart would be loaded from a chart file; here we
+## just log each detected onset so the flow is visible.
+func _judge_note_event(ev: Dictionary) -> void:
+	var ev_midi: int    = int(ev.get("midi_note", -1))
+	var ev_time: float  = float(ev.get("time_sec", 0.0))
+	var ev_conf: float  = float(ev.get("confidence", 0.0))
+
+	if ev_midi < 0 or ev_conf < MIN_CONFIDENCE:
+		return
+
+	# Find a matching chart note within the hit window.
+	var hit_note: Dictionary = {}
+	for chart_note in _demo_chart:
+		var dt: float = abs(float(chart_note.get("time_sec", 0.0)) - ev_time)
+		if dt <= HIT_WINDOW_SEC and int(chart_note.get("midi_note", -1)) == ev_midi:
+			hit_note = chart_note
+			break
+
+	var note_name: String = midi_to_note_display(ev_midi)
+	if hit_note.is_empty():
+		_last_event_log = "onset: %s (midi %d) @ %.3f s  [no chart match]" % [note_name, ev_midi, ev_time]
+	else:
+		_last_event_log = "HIT:   %s (midi %d) @ %.3f s  conf=%.2f" % [note_name, ev_midi, ev_time, ev_conf]
+
+## Check whether the player is sustaining a pitch from the history buffer.
+## 'history' is newest-first; index 0 is the most recent frame.
+func _update_sustain_debug(history: Array) -> void:
+	if history.is_empty():
+		return
+	var valid_count: int = 0
+	var pitch_sum: float = 0.0
+	for frame in history:
+		if bool(frame.get("pitch_valid", false)):
+			valid_count += 1
+			pitch_sum += float(frame.get("pitch_hz", 0.0))
+	if valid_count == 0:
+		return
+	# Average pitch over recent frames – useful to detect bends / vibrato.
+	@warning_ignore("integer_division")
+	var avg_hz: float = pitch_sum / float(valid_count)
+	# In a real game: compare avg_hz against the expected chart note's pitch
+	# to determine sustain/bend accuracy.  Here we just update the status bar
+	# when the last-event log is empty (so it doesn't overwrite HIT messages).
+	if _last_event_log.is_empty():
+		_status_bar.text = "sustain avg: %.1f Hz  (%d/%d valid frames)" % [avg_hz, valid_count, history.size()]
+
+# ── Mode / tuning / threshold callbacks ──────────────────────────────────────
+
 func _on_mode_changed(index: int) -> void:
 	_mode = index
+	_song_time = 0.0
 	if _mode == 0:
-		# Playback mode: stop mic, start dataset.
 		_guitar_in_player.stop()
 		if _dataset_player and _dataset_files.size() > 0:
 			var stream: AudioStreamWAV = _load_wav(_dataset_files[_dataset_index])
@@ -270,7 +355,6 @@ func _on_mode_changed(index: int) -> void:
 					_dataset_monitor_player.play()
 		_status_bar.text = "Status: Playback – dataset on GuitarIn bus"
 	else:
-		# Input mode: stop dataset, start live mic.
 		if _dataset_player:
 			_dataset_player.stop()
 		if _dataset_monitor_player:
@@ -284,7 +368,7 @@ func _on_tuning_changed(index: int) -> void:
 	if _audio_effect:
 		_audio_effect.set("band_ranges", ranges)
 	if _detector_node:
-		_detector_node.set("band_ranges", ranges)  # auto-triggers init_detector()
+		_detector_node.set("band_ranges", ranges)
 	_rebuild_dataset_playlist()
 
 func _on_threshold_changed(val: float) -> void:
@@ -360,6 +444,8 @@ func _normalize_note_class(note: String) -> String:
 		"B#": return "C"
 		_:    return note
 
+# ── Per-string tuner UI update (Tier 1) ──────────────────────────────────────
+
 func _on_notes_detected(notes: Array) -> void:
 	for band in range(min(notes.size(), _band_labels.size())):
 		var item: Dictionary = notes[band]
@@ -383,6 +469,21 @@ func _on_notes_detected(notes: Array) -> void:
 			row[4].text = "%.0f%%" % (conf * 100.0)
 			row[2].modulate = Color.GREEN
 
+	# Show latest detection snapshot in status bar (Tier 1 debug info).
+	if _audio_effect and _audio_effect.has_method("get_latest_detection"):
+		var det: Dictionary = _audio_effect.get_latest_detection()
+		if bool(det.get("pitch_valid", false)):
+			var snap_note: String = midi_to_note_display(int(det.get("midi_note", -1)))
+			var snap_conf: float  = float(det.get("confidence", 0.0))
+			var snap_hz: float    = float(det.get("pitch_hz", 0.0))
+			var onset_flag: String = " [ONSET]" if bool(det.get("onset", false)) else ""
+			_status_bar.text = "Detection: %s  %.1f Hz  conf %.0f%%%s" % [
+				snap_note, snap_hz, snap_conf * 100.0, onset_flag
+			]
+			if not _last_event_log.is_empty():
+				_status_bar.text += "  |  " + _last_event_log
+				_last_event_log = ""
+
 func _build_string_labels() -> void:
 	for h in ["String", "Frequency", "Note", "Cents", "Conf."]:
 		var lbl := Label.new()
@@ -404,4 +505,4 @@ func _build_string_labels() -> void:
 				lbl.text = "—"
 			_strings_grid.add_child(lbl)
 			row.append(lbl)
-		_band_labels.append(row)
+_band_labels.append(row)

@@ -10,6 +10,279 @@ C++ library, accessed directly (no FFI bridge required).
 ## Architecture
 
 ```
+Guitar/bass audio
+     │
+     ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Godot audio bus  (GuitarIn)                                         │
+│    AudioEffectQEngine  ←  extends AudioEffectCapture                 │
+│      drains capture buffer (stereo → mono)                           │
+└─────────────────────────────────────────────────────────────────────┘
+                      │ PCM samples
+                      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  BandDetector  (C++)                                                  │
+│    6 × cycfi::q::pitch_detector  (one per guitar string)             │
+│    SPSC audio ring buffer  (audio thread → main thread safe)         │
+│                                                                       │
+│  Outputs three data tiers via SPSC ring buffers:                     │
+│    ① latest DetectionFrame  – best-pitch snapshot                    │
+│    ② NoteEvent queue        – onset-triggered events  (SPSC FIFO)   │
+│    ③ frame history          – last 128 frames  (SPSC circular log)   │
+└─────────────────────────────────────────────────────────────────────┘
+          │ ①              │ ②                   │ ③
+          ▼                ▼                      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  GDScript / gameplay  (main thread)                                   │
+│    Tuner / debug UI     Chart-aware attack       Sustain / bend /    │
+│    reads latest_frame   judgment (pop events,    vibrato analysis    │
+│                         compare to chart note)   (read frame history)│
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Design principle
+
+The C++ layer is a **real-time audio analysis engine**, not a gameplay judge.
+It answers *"what did the audio observe?"*  
+GDScript answers *"does that match what the chart expects?"*
+
+| Layer | Responsibility |
+|---|---|
+| `AudioEffectQEngine` / `BandDetector` | Pitch detection, onset detection, level tracking, SPSC state export |
+| GDScript gameplay | Chart loading, hit windows, scoring, sustain/bend judgment |
+
+### Source layout
+
+| Path | Purpose |
+|---|---|
+| `src/band_detector.hpp/.cpp` | `BandDetector`, `SPSCEventQueue<T,N>`, `SPSCFrameHistory<T,N>`, `AudioRingBuffer<N>` |
+| `src/audio_effect_qengine.hpp/.cpp` | Godot `AudioEffectQEngine` (extends `AudioEffectCapture`) |
+| `src/detector_node.hpp/.cpp` | Godot `QEngineDetectorNode` (extends `Node`) |
+| `src/register_types.cpp` | GDExtension entry point (`godot_qengine_init`) |
+| `tests/test_pitch_detection.cpp` | Standalone C++ tests (no Godot required) |
+| `third_party/q` | cycfi/Q (git submodule) |
+| `third_party/infra` | cycfi/infra (git submodule) |
+
+---
+
+## GDScript API
+
+Both `AudioEffectQEngine` and `QEngineDetectorNode` expose the same three-tier
+analysis API.
+
+### Tier 1 – Latest detection snapshot
+
+```gdscript
+# Dictionary keys:
+#   time_sec    float   – elapsed audio time (s)
+#   pitch_hz    float   – detected frequency (0 if none)
+#   midi_note   int     – nearest MIDI note [0,127]; -1 if none
+#   midi_float  float   – fractional MIDI (e.g. 57.35) for fine pitch
+#   confidence  float   – Q periodicity [0,1]
+#   level       float   – RMS signal level [0,1]
+#   onset       bool    – true when a new attack was just detected
+#   pitch_valid bool    – true when pitch fields are reliable
+var det: Dictionary = fx.get_latest_detection()
+if det.pitch_valid:
+    print("pitch: %s  %.1f Hz" % [note_name(det.midi_note), det.pitch_hz])
+```
+
+### Tier 2 – Onset event queue (chart-aware attack judgment)
+
+```gdscript
+# Drain the SPSC NoteEvent ring buffer each frame.
+# Each event Dictionary:
+#   time_sec, pitch_hz, midi_note, confidence, level
+for ev in fx.pop_note_events():
+    if abs(ev.time_sec - chart_note.time_sec) < HIT_WINDOW:
+        if ev.midi_note == chart_note.midi_note:
+            mark_hit()
+```
+
+### Tier 3 – Frame history (sustain / bend / vibrato)
+
+```gdscript
+# Read up to N recent DetectionFrames (newest first, non-destructive).
+# Same keys as get_latest_detection() minus 'onset'.
+var history: Array = fx.get_frame_history(30)
+var valid_frames := history.filter(func(f): return f.pitch_valid)
+if valid_frames.size() > 20:
+    var avg_hz = valid_frames.reduce(func(a,b): return a + b.pitch_hz, 0.0) \
+                 / valid_frames.size()
+    check_bend_target(avg_hz, expected_hz)
+```
+
+### Legacy per-string tuner API (backwards-compatible)
+
+```gdscript
+# Returns 7 Dictionaries: indices 0-5 are per-string bands, index 6 is
+# a chord summary row.  Keys: band, frequency, periodicity, midi_note, cents.
+var notes: Array = fx.poll_notes()
+for i in 6:
+    print("string %d: %s" % [i, notes[i].get("midi_note", -1)])
+```
+
+---
+
+## Supported tunings
+
+| ID | Name | Strings (low → high) |
+|---|---|---|
+| `Standard` | E Standard | E2 A2 D3 G3 B3 E4 |
+| `DropD` | Drop D | D2 A2 D3 G3 B3 E4 |
+| `OpenD` | Open D | D2 A2 D3 F#3 A3 D4 |
+| `DropC` | Drop C | C2 G2 C3 F3 A3 D4 |
+| `DADGAD` | DADGAD | D2 A2 D3 G3 A3 D4 |
+
+---
+
+## Prerequisites
+
+| Requirement | Version |
+|---|---|
+| C++ compiler | GCC 12+, Clang 16+, or MSVC 2022+ (C++20 required) |
+| CMake | 3.22+ |
+| Godot | 4.4+ |
+| git | for submodule checkout |
+
+---
+
+## Getting started
+
+### 1. Clone with submodules
+
+```bash
+git clone --recurse-submodules https://github.com/goguitar/godot-qengine.git
+cd godot-qengine
+```
+
+If you already cloned without `--recurse-submodules`:
+
+```bash
+git submodule update --init --recursive
+```
+
+### 2. Build the GDExtension
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target godot_qengine --config Release
+```
+
+The compiled library lands in `build/`:
+
+| Platform | File |
+|---|---|
+| Linux | `build/libgodot_qengine.so` |
+| macOS | `build/libgodot_qengine.dylib` |
+| Windows | `build/godot_qengine.dll` (or `build/Release/`) |
+
+### 3. Run the demo
+
+Open `demo/` as a Godot 4.4+ project.  The demo plays dataset audio through
+the `GuitarIn` bus and shows:
+
+- per-string tuner grid (Tier 1 / `poll_notes`)
+- latest detection snapshot in the status bar (`get_latest_detection`)
+- onset event log with chart-match result (`pop_note_events`)
+- sustain tracking debug line (`get_frame_history`)
+
+---
+
+## Using in your own project
+
+### Option A – AudioEffectQEngine (audio-bus integration)
+
+1. Copy `demo/godot-qengine.gdextension` to your project root and adjust the
+   library paths.
+2. In the Godot Audio panel, add **AudioEffectQEngine** to any bus.
+3. Configure once from GDScript:
+
+```gdscript
+@onready var fx := AudioServer.get_bus_effect(
+    AudioServer.get_bus_index("GuitarIn"), 0)
+
+func _ready():
+    fx.band_ranges    = STANDARD_RANGES   # 12 floats; must be set before detection works
+    fx.sample_rate    = 48000.0
+    fx.min_periodicity = 0.85
+    fx.threshold_db   = -45.0
+```
+
+4. Each frame, consume the data tier(s) you need:
+
+```gdscript
+func _process(_delta):
+    # Tier 1 – tuner UI
+    var det = fx.get_latest_detection()
+
+    # Tier 2 – chart attack judgment
+    for ev in fx.pop_note_events():
+        judge_against_chart(ev)
+
+    # Tier 3 – sustain / bend / vibrato
+    var history = fx.get_frame_history(30)
+```
+
+### Option B – QEngineDetectorNode (standalone node)
+
+Add a **QEngineDetectorNode** to your scene and push audio samples manually:
+
+```gdscript
+@onready var detector := $QEngineDetectorNode
+
+func _ready():
+    detector.band_ranges = STANDARD_RANGES
+    detector.connect("notes_detected", _on_notes)
+
+func push_audio_block(buf: PackedFloat32Array):
+    detector.push_samples(buf)
+
+func _process(_delta):
+    for ev in detector.pop_note_events():
+        judge_against_chart(ev)
+```
+
+---
+
+## Running the tests
+
+Tests are standalone C++ executables and do **not** require Godot:
+
+```bash
+cmake --build build --target qengine_tests
+ctest --test-dir build --output-on-failure
+```
+
+---
+
+## Thread safety
+
+All shared state between the analysis layer and GDScript uses SPSC (single-
+producer / single-consumer) ring buffers with `std::atomic` head/tail indices:
+
+| Buffer | Producer | Consumer |
+|---|---|---|
+| `AudioRingBuffer` (PCM samples) | audio thread | main thread (`poll_notes`) |
+| `SPSCEventQueue` (NoteEvents) | main thread analysis | main thread GDScript |
+| `SPSCFrameHistory` (DetectionFrames) | main thread analysis | main thread GDScript |
+
+No scene-tree operations are performed from the audio thread.
+
+---
+
+## License
+
+MIT – see [LICENSE](LICENSE).  
+cycfi/Q and cycfi/infra are also MIT licensed.  
+godot-cpp is MIT licensed.
+
+
+---
+
+## Architecture
+
+```
 ┌───────────────────────────────────────────────────────┐
 │  Godot audio bus                                       │
 │    AudioEffectQEngine::poll_notes()                    │

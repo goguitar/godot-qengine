@@ -1,4 +1,6 @@
 // detector_node.cpp – QEngineDetectorNode implementation.
+//
+// Architecture v2: exposes three-tier analysis API alongside legacy poll_notes().
 
 #include "detector_node.hpp"
 
@@ -7,6 +9,8 @@
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <array>
 #include <cmath>
+#include <vector>
+
 namespace godot {
 
 namespace {
@@ -85,6 +89,31 @@ Dictionary make_chord_row(const std::vector<DetectionResult>& results)
     chord["chord_notes"] = chord_notes;
     return chord;
 }
+
+Dictionary frame_to_dict(const DetectionFrame& f)
+{
+    Dictionary d;
+    d["time_sec"]    = f.time_sec;
+    d["pitch_hz"]    = static_cast<double>(f.pitch_hz);
+    d["midi_note"]   = f.midi_note;
+    d["midi_float"]  = static_cast<double>(f.midi_float);
+    d["confidence"]  = static_cast<double>(f.confidence);
+    d["level"]       = static_cast<double>(f.level);
+    d["onset"]       = f.onset;
+    d["pitch_valid"] = f.pitch_valid;
+    return d;
+}
+
+Dictionary event_to_dict(const NoteEvent& ev)
+{
+    Dictionary d;
+    d["time_sec"]   = ev.time_sec;
+    d["pitch_hz"]   = static_cast<double>(ev.pitch_hz);
+    d["midi_note"]  = ev.midi_note;
+    d["confidence"] = static_cast<double>(ev.confidence);
+    d["level"]      = static_cast<double>(ev.level);
+    return d;
+}
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,10 +122,16 @@ Dictionary make_chord_row(const std::vector<DetectionResult>& results)
 
 void QEngineDetectorNode::_bind_methods()
 {
+    // Legacy per-string API
     ClassDB::bind_method(D_METHOD("init_detector"),             &QEngineDetectorNode::init_detector);
     ClassDB::bind_method(D_METHOD("push_samples", "samples"),   &QEngineDetectorNode::push_samples);
     ClassDB::bind_method(D_METHOD("poll_notes"),                &QEngineDetectorNode::poll_notes);
     ClassDB::bind_method(D_METHOD("reset"),                     &QEngineDetectorNode::reset);
+
+    // New analysis-state API
+    ClassDB::bind_method(D_METHOD("get_latest_detection"),        &QEngineDetectorNode::get_latest_detection);
+    ClassDB::bind_method(D_METHOD("pop_note_events"),             &QEngineDetectorNode::pop_note_events);
+    ClassDB::bind_method(D_METHOD("get_frame_history", "count"),  &QEngineDetectorNode::get_frame_history);
 
     ClassDB::bind_method(D_METHOD("set_sample_rate",      "v"), &QEngineDetectorNode::set_sample_rate);
     ClassDB::bind_method(D_METHOD("get_sample_rate"),           &QEngineDetectorNode::get_sample_rate);
@@ -135,7 +170,7 @@ void QEngineDetectorNode::_process(double /*delta*/)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// current_ranges (private) – build array from band_ranges or Standard defaults
+// current_ranges (private)
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::array<BandRange, 6> QEngineDetectorNode::current_ranges() const
@@ -149,12 +184,11 @@ std::array<BandRange, 6> QEngineDetectorNode::current_ranges() const
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GDScript API
+// GDScript API – legacy per-string tuner
 // ─────────────────────────────────────────────────────────────────────────────
 
 void QEngineDetectorNode::init_detector()
 {
-    // band_ranges must be configured from GDScript before init is useful.
     if (band_ranges.size() < 12)
         return;
 
@@ -178,8 +212,6 @@ Array QEngineDetectorNode::poll_notes()
     if (!detector)
         return Array();
 
-    // Drain ring → detectors, then build 7 rows:
-    // 6 per-string rows plus one chord summary row.
     auto results = detector->process();
     apply_q_filters(results, static_cast<float>(min_periodicity));
 
@@ -205,6 +237,41 @@ void QEngineDetectorNode::reset()
     if (detector) {
         detector->reset();
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GDScript API – new analysis-state tier
+// ─────────────────────────────────────────────────────────────────────────────
+
+Dictionary QEngineDetectorNode::get_latest_detection() const
+{
+    if (!detector)
+        return frame_to_dict(DetectionFrame{});
+    return frame_to_dict(detector->latest_frame());
+}
+
+Array QEngineDetectorNode::pop_note_events()
+{
+    Array out;
+    if (!detector)
+        return out;
+    NoteEvent ev;
+    while (detector->pop_event(ev))
+        out.append(event_to_dict(ev));
+    return out;
+}
+
+Array QEngineDetectorNode::get_frame_history(int count) const
+{
+    Array out;
+    if (!detector || count <= 0)
+        return out;
+    const std::size_t n = static_cast<std::size_t>(count);
+    std::vector<DetectionFrame> tmp(n);
+    const std::size_t got = detector->get_frame_history(tmp.data(), n);
+    for (std::size_t i = 0; i < got; ++i)
+        out.append(frame_to_dict(tmp[i]));
+    return out;
 }
 
 } // namespace godot

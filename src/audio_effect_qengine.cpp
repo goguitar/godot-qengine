@@ -1,9 +1,15 @@
 // audio_effect_qengine.cpp – AudioEffectQEngine implementation.
 //
-// The C++ layer outputs raw Q pitch-detector results (frequency + periodicity).
-// Note-name mapping and tuning selection live in GDScript.
-// Band frequency ranges must be set from GDScript via set_band_ranges() /
-// the band_ranges property before poll_notes() will produce results.
+// Architecture v2: the C++ layer is a real-time analysis engine, not a
+// gameplay judge.  It exposes:
+//   poll_notes()           – per-string tuner rows (legacy, kept for UI)
+//   get_latest_detection() – best-pitch snapshot for this frame
+//   pop_note_events()      – onset-triggered event queue (chart matching)
+//   get_frame_history(n)   – last n frames (sustain/bend/vibrato analysis)
+//
+// Note-name mapping and chart-aware judgment live in GDScript.
+// Band frequency ranges must be set from GDScript via band_ranges before
+// any detection works.
 
 #include "audio_effect_qengine.hpp"
 
@@ -93,6 +99,31 @@ Dictionary make_chord_row(const std::vector<DetectionResult>& results)
     chord["chord_notes"] = chord_notes;
     return chord;
 }
+
+Dictionary frame_to_dict(const DetectionFrame& f)
+{
+    Dictionary d;
+    d["time_sec"]    = f.time_sec;
+    d["pitch_hz"]    = static_cast<double>(f.pitch_hz);
+    d["midi_note"]   = f.midi_note;
+    d["midi_float"]  = static_cast<double>(f.midi_float);
+    d["confidence"]  = static_cast<double>(f.confidence);
+    d["level"]       = static_cast<double>(f.level);
+    d["onset"]       = f.onset;
+    d["pitch_valid"] = f.pitch_valid;
+    return d;
+}
+
+Dictionary event_to_dict(const NoteEvent& ev)
+{
+    Dictionary d;
+    d["time_sec"]   = ev.time_sec;
+    d["pitch_hz"]   = static_cast<double>(ev.pitch_hz);
+    d["midi_note"]  = ev.midi_note;
+    d["confidence"] = static_cast<double>(ev.confidence);
+    d["level"]      = static_cast<double>(ev.level);
+    return d;
+}
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,8 +132,14 @@ Dictionary make_chord_row(const std::vector<DetectionResult>& results)
 
 void AudioEffectQEngine::_bind_methods()
 {
+    // Legacy per-string API
     ClassDB::bind_method(D_METHOD("poll_notes"), &AudioEffectQEngine::poll_notes);
     ClassDB::bind_method(D_METHOD("reset"),      &AudioEffectQEngine::reset);
+
+    // New analysis-state API
+    ClassDB::bind_method(D_METHOD("get_latest_detection"),        &AudioEffectQEngine::get_latest_detection);
+    ClassDB::bind_method(D_METHOD("pop_note_events"),             &AudioEffectQEngine::pop_note_events);
+    ClassDB::bind_method(D_METHOD("get_frame_history", "count"),  &AudioEffectQEngine::get_frame_history);
 
     ClassDB::bind_method(D_METHOD("set_sample_rate",      "v"), &AudioEffectQEngine::set_sample_rate);
     ClassDB::bind_method(D_METHOD("get_sample_rate"),          &AudioEffectQEngine::get_sample_rate);
@@ -120,7 +157,7 @@ void AudioEffectQEngine::_bind_methods()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// poll_notes
+// poll_notes  (legacy per-string tuner row API)
 // ─────────────────────────────────────────────────────────────────────────────
 
 Array AudioEffectQEngine::poll_notes()
@@ -143,8 +180,6 @@ Array AudioEffectQEngine::poll_notes()
     }
 
     // Drain the Godot capture buffer.
-    // AudioEffectCapture on a mono bus delivers the same signal on both
-    // channels; read channel x directly (no downmix needed).
     const int64_t available = get_frames_available();
     if (available > 0) {
         const PackedVector2Array frames = get_buffer(available);
@@ -175,6 +210,49 @@ Array AudioEffectQEngine::poll_notes()
         out[r.band] = d;
     }
     out[6] = make_chord_row(results);
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// get_latest_detection  – snapshot of the best pitch this frame
+// ─────────────────────────────────────────────────────────────────────────────
+
+Dictionary AudioEffectQEngine::get_latest_detection() const
+{
+    if (!detector)
+        return frame_to_dict(DetectionFrame{});
+    return frame_to_dict(detector->latest_frame());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// pop_note_events  – drain onset event queue for chart matching
+// ─────────────────────────────────────────────────────────────────────────────
+
+Array AudioEffectQEngine::pop_note_events()
+{
+    Array out;
+    if (!detector)
+        return out;
+    NoteEvent ev;
+    while (detector->pop_event(ev))
+        out.append(event_to_dict(ev));
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// get_frame_history  – recent frame list for sustain/bend/vibrato
+// ─────────────────────────────────────────────────────────────────────────────
+
+Array AudioEffectQEngine::get_frame_history(int count) const
+{
+    Array out;
+    if (!detector || count <= 0)
+        return out;
+    const std::size_t n = static_cast<std::size_t>(count);
+    std::vector<DetectionFrame> tmp(n);
+    const std::size_t got = detector->get_frame_history(tmp.data(), n);
+    for (std::size_t i = 0; i < got; ++i)
+        out.append(frame_to_dict(tmp[i]));
     return out;
 }
 
@@ -210,7 +288,6 @@ std::array<BandRange, 6> AudioEffectQEngine::current_ranges() const
 
 void AudioEffectQEngine::ensure_detector()
 {
-    // Don't build the detector until GDScript has configured band_ranges.
     if (band_ranges.size() < 12) {
         detector.reset();
         return;

@@ -1,10 +1,14 @@
 // detector_node.hpp – QEngineDetectorNode: a Godot Node for manual audio
-// routing.  Receives PCM samples via push_samples() and emits the
-// "notes_detected" signal (or returns notes from poll_notes()).
+// routing.  Receives PCM samples via push_samples() and exposes the same
+// three-tier analysis API as AudioEffectQEngine.
 //
-// Raw Q pitch-detector results (frequency, periodicity, midi_note, cents) are
-// returned.  Note-name mapping and tuning selection live in GDScript.
+// Architecture v2:
+//   poll_notes()           – legacy per-string tuner rows (kept for UI)
+//   get_latest_detection() – best-pitch snapshot for chart-aware judgment
+//   pop_note_events()      – onset event queue for attack detection
+//   get_frame_history(n)   – recent frames for sustain/bend/vibrato
 //
+// Note-name mapping and chart-aware judgment live in GDScript.
 // Band frequency ranges MUST be set from GDScript via:
 //   detector.band_ranges = PackedFloat32Array([min0, max0, …, min5, max5])
 // Setting this property automatically rebuilds the internal detector.
@@ -15,6 +19,7 @@
 #include <memory>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 
@@ -32,7 +37,7 @@ public:
     void _ready()                override;
     void _process(double delta)  override;
 
-    // ── GDScript API ──────────────────────────────────────────────────────
+    // ── GDScript API – legacy per-string tuner ────────────────────────────
 
     /// (Re)build the internal BandDetector using the current property values.
     void  init_detector();
@@ -46,6 +51,20 @@ public:
 
     /// Reset all Q detectors.
     void  reset();
+
+    // ── GDScript API – new analysis-state tier ────────────────────────────
+
+    /// Latest analysis snapshot from the most recent poll_notes() call.
+    /// Dictionary keys: time_sec, pitch_hz, midi_note, midi_float,
+    ///                  confidence, level, onset, pitch_valid.
+    Dictionary get_latest_detection() const;
+
+    /// Pop all pending NoteEvents from the onset queue.
+    /// Each event Dictionary: time_sec, pitch_hz, midi_note, confidence, level.
+    Array pop_note_events();
+
+    /// Return up to count recent DetectionFrames (newest first).
+    Array get_frame_history(int count) const;
 
     // ── Exported properties ───────────────────────────────────────────────
 
