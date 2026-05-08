@@ -604,6 +604,178 @@ static void test_chord_frame_api()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Chord expected-vs-detected tests
+//
+// For each named chord, the test table declares:
+//   • The expected MIDI note per string (or -1 for a muted/absent string).
+//   • The test feeds the expected frequency through that string's band detector.
+//   • The ChordFrame output is compared against the table, string-by-string:
+//       - Active string: active == true, midi_note == expected_midi (±1 semitone)
+//       - Muted  string: active == false                             (silence)
+//
+// This directly answers "Expected Strings/Notes == Detected Strings/Notes?"
+//
+// BandDetector runs one Q pitch_detector per string and all six detectors share
+// a single input buffer.  When a single-frequency sine is fed, only the band
+// whose range covers that frequency fires; the rest remain silent.  We exploit
+// this to test one string at a time while still using the full ChordFrame API.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct ChordStringSpec {
+    float       freq_hz;      ///< expected open-string or fretted frequency; 0.0 = muted
+    int         expected_midi; ///< expected MIDI note (0 = muted/silent → -1)
+    const char* note_name;    ///< human-readable label e.g. "A2"
+};
+
+/// Run per-string expected-vs-detected verification for one chord voicing.
+/// 'label'  – chord name used in test-name strings (e.g. "chord_A_major").
+/// 'specs'  – array of 6 ChordStringSpec entries (index 0 = lowest string E2).
+///            Set freq_hz to 0 and expected_midi to -1 for muted strings.
+/// 'root_band' – string index expected to be the dominant/root note.
+static void run_chord_string_test(const char*              label,
+                                  const ChordStringSpec    specs[6],
+                                  int                      root_band)
+{
+    // Test each string independently: feed the string's frequency to the
+    // whole detector and verify the ChordFrame output for that band.
+    for (int band = 0; band < 6; ++band) {
+        const ChordStringSpec& s = specs[band];
+
+        BandDetector det(44100.0f, STANDARD);
+
+        if (s.freq_hz > 0.0f) {
+            // ── Active string: feed the expected frequency ──────────────────
+            auto buf = sine_wave(s.freq_hz);
+            det.push_samples(buf.data(), buf.size());
+            det.process();
+
+            ChordFrame cf{};
+            det.pop_chord_frame(cf);
+
+            // Build descriptive test-name strings.
+            char tag_active[128], tag_midi[128], tag_dominant[128];
+            std::snprintf(tag_active,   sizeof(tag_active),
+                          "%s_string%d_%s_active",   label, band, s.note_name);
+            std::snprintf(tag_midi,     sizeof(tag_midi),
+                          "%s_string%d_%s_expected_midi_%d_got_%d",
+                          label, band, s.note_name, s.expected_midi,
+                          cf.strings[band].midi_note);
+
+            CHECK(cf.strings[band].active,           tag_active);
+
+            // Allow ±1 semitone tolerance for the pitch detector.
+            bool midi_ok = std::abs(cf.strings[band].midi_note - s.expected_midi) <= 1;
+            CHECK(midi_ok,                           tag_midi);
+
+            // If this is the root string, verify dominant is sensible.
+            if (band == root_band) {
+                std::snprintf(tag_dominant, sizeof(tag_dominant),
+                              "%s_root_string%d_%s_is_dominant",
+                              label, band, s.note_name);
+                bool dominant_ok = (cf.dominant_band >= 0 && cf.dominant_midi >= 0);
+                CHECK(dominant_ok,                   tag_dominant);
+            }
+        } else {
+            // ── Muted string: feed silence ──────────────────────────────────
+            std::vector<float> silence(44100, 0.0f);
+            det.push_samples(silence.data(), silence.size());
+            det.process();
+
+            ChordFrame cf{};
+            det.pop_chord_frame(cf);
+
+            char tag_muted[128];
+            std::snprintf(tag_muted, sizeof(tag_muted),
+                          "%s_string%d_muted_inactive", label, band);
+            CHECK(!cf.strings[band].active,          tag_muted);
+        }
+    }
+}
+
+static void test_chord_expected_vs_detected()
+{
+    std::printf("\n-- Chord expected-vs-detected (per-string) tests --\n");
+
+    // ── Open Em chord (E Standard)  E2 B2 E3 G3 B3 E4 ───────────────────────
+    // All 6 strings active.  Root = band 0 (E2).
+    {
+        const ChordStringSpec em[6] = {
+            {  82.41f, 40, "E2" },   // string 6 (low E)
+            { 123.47f, 47, "B2" },   // string 5
+            { 164.81f, 52, "E3" },   // string 4
+            { 196.00f, 55, "G3" },   // string 3
+            { 246.94f, 59, "B3" },   // string 2
+            { 329.63f, 64, "E4" },   // string 1 (high E)
+        };
+        run_chord_string_test("chord_em_open", em, 0);
+    }
+
+    // ── Open A major chord (E Standard)  x A2 E3 A3 C#4 E4 ─────────────────
+    // String 0 (low E) is muted.  Root = band 1 (A2).
+    // C#4 = 277.18 Hz (MIDI 61), in band 4 range 239.91–493.88.
+    {
+        const ChordStringSpec a_major[6] = {
+            { 0.0f,    -1, "muted" }, // string 6 (low E) – muted in open A
+            { 110.00f, 45, "A2"    }, // string 5
+            { 164.81f, 52, "E3"    }, // string 4
+            { 220.00f, 57, "A3"    }, // string 3
+            { 277.18f, 61, "C#4"   }, // string 2
+            { 329.63f, 64, "E4"    }, // string 1
+        };
+        run_chord_string_test("chord_a_major_open", a_major, 1);
+    }
+
+    // ── Open D major chord (E Standard)  x x D3 A3 D4 F#4 ──────────────────
+    // Standard shape xx0232.  Strings 0 and 1 are muted.  Root = band 2 (D3).
+    // Band ranges used (Standard tuning):
+    //   band 2 (142.65–293.66): D3 = 146.83 Hz  ✓
+    //   band 3 (190.42–392.00): A3 = 220.00 Hz  ✓  (G string 2nd fret)
+    //   band 4 (239.91–493.88): D4 = 293.66 Hz  ✓  (B string 3rd fret)
+    //   band 5 (320.25–659.26): F#4 = 369.99 Hz ✓  (high-E string 2nd fret)
+    {
+        const ChordStringSpec d_major[6] = {
+            { 0.0f,    -1, "muted" }, // string 6 – muted in open D
+            { 0.0f,    -1, "muted" }, // string 5 – muted in open D
+            { 146.83f, 50, "D3"    }, // string 4 – open D3 (band 2)
+            { 220.00f, 57, "A3"    }, // string 3 – A3 (band 3: G string 2nd fret)
+            { 293.66f, 62, "D4"    }, // string 2 – D4 (band 4: B string 3rd fret)
+            { 369.99f, 66, "F#4"   }, // string 1 – F#4 (band 5: high-E 2nd fret)
+        };
+        run_chord_string_test("chord_d_major_open", d_major, 2);
+    }
+
+    // ── Open G major chord (E Standard)  G2 B2 D3 G3 B3 G4 ─────────────────
+    // All 6 strings active.  Root = band 0 (G2, 3rd fret low E).
+    // G2 = 98.00 Hz (MIDI 43), in band 0 range 80.11–164.82.
+    // G4 = 392.00 Hz (MIDI 67), in band 5 range 320.25–659.26.
+    {
+        const ChordStringSpec g_major[6] = {
+            {  98.00f, 43, "G2" },   // string 6 – 3rd fret E2
+            { 123.47f, 47, "B2" },   // string 5 – open B2
+            { 146.83f, 50, "D3" },   // string 4 – open D3
+            { 196.00f, 55, "G3" },   // string 3 – open G3
+            { 246.94f, 59, "B3" },   // string 2 – open B3
+            { 392.00f, 67, "G4" },   // string 1 – 3rd fret E4
+        };
+        run_chord_string_test("chord_g_major_open", g_major, 0);
+    }
+
+    // ── Partial chord: power chord E5 (E2 + E3, strings 0+2 only) ───────────
+    // Strings 1, 3, 4, 5 are muted.  Demonstrates muted-string detection.
+    {
+        const ChordStringSpec e5_power[6] = {
+            {  82.41f, 40, "E2" },   // string 6 – root
+            { 0.0f,    -1, "muted"}, // string 5
+            { 164.81f, 52, "E3" },   // string 4 – octave
+            { 0.0f,    -1, "muted"}, // string 3
+            { 0.0f,    -1, "muted"}, // string 2
+            { 0.0f,    -1, "muted"}, // string 1
+        };
+        run_chord_string_test("chord_e5_power", e5_power, 0);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // main
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -624,6 +796,9 @@ int main()
     test_detector_analysis_api();
 
     test_chord_frame_api();
+
+    std::printf("\n-- Chord expected-vs-detected (per-string) tests --\n");
+    test_chord_expected_vs_detected();
 
     std::printf("\ntest result: %s.  %d passed; %d failed\n",
         g_fail == 0 ? "ok" : "FAILED",
