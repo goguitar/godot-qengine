@@ -90,6 +90,7 @@ target_compile_options(qengine_core PRIVATE
 # ─────────────────────────────────────────────────────────────────────────────
 add_library(godot_qengine SHARED
     src/audio_effect_qengine.cpp
+    src/async_band_detector.cpp
     src/detector_node.cpp
     src/register_types.cpp
 )

@@ -23,7 +23,7 @@
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 
-#include "band_detector.hpp"
+#include "async_band_detector.hpp"
 
 namespace godot {
 
@@ -81,7 +81,12 @@ public:
     void   set_threshold_db(double v)     { threshold_db = v; }
     double get_threshold_db()     const   { return threshold_db; }
 
-    void   set_min_periodicity(double v)  { min_periodicity = v; }
+    void   set_min_periodicity(double v)  {
+        min_periodicity = v;
+        if (detector) {
+            detector->set_min_periodicity(static_cast<float>(v));
+        }
+    }
     double get_min_periodicity()  const   { return min_periodicity; }
 
     /// Per-band frequency bounds: 12 floats – [min0, max0, min1, max1, …, min5, max5].
@@ -102,7 +107,7 @@ private:
     PackedFloat32Array band_ranges;
     bool               auto_poll       = true;
 
-    std::unique_ptr<BandDetector> detector;
+    std::unique_ptr<AsyncBandDetector> detector;
 
     std::array<BandRange, 6> current_ranges() const;
 };

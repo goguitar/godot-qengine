@@ -398,7 +398,7 @@ static void test_detector_analysis_api()
     det.process();
 
     // latest_frame() should report a valid detection.
-    const DetectionFrame& f = det.latest_frame();
+    DetectionFrame f = det.latest_frame();
     CHECK(f.pitch_valid,                      "detector_latest_frame_pitch_valid");
     CHECK(std::abs(f.pitch_hz - 82.41f) < 3.0f, "detector_latest_frame_pitch_hz");
     CHECK(f.midi_note == 40,                  "detector_latest_frame_midi_note_e2");
@@ -422,7 +422,7 @@ static void test_detector_analysis_api()
 
     // reset() clears all state.
     det.reset();
-    const DetectionFrame& fr = det.latest_frame();
+    DetectionFrame fr = det.latest_frame();
     CHECK(!fr.pitch_valid,                    "detector_reset_clears_latest_frame");
     CHECK(!det.has_events(),                  "detector_reset_clears_event_queue");
     DetectionFrame hist2[4]{};

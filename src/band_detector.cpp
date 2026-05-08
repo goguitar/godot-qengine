@@ -48,7 +48,7 @@ BandDetector::~BandDetector() = default;
 void BandDetector::push_samples(const float* samples, std::size_t count)
 {
     _ring.push(samples, count);
-    _sample_count += count;
+    _sample_count.fetch_add(count, std::memory_order_relaxed);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,6 +72,7 @@ std::vector<DetectionResult> BandDetector::process()
     const float rms_level = (n_drained > 0)
         ? std::sqrt(sum_sq / static_cast<float>(n_drained))
         : 0.0f;
+    const float min_periodicity = _min_periodicity.load(std::memory_order_relaxed);
 
     // Collect per-band results using Q's pitch type for MIDI note and cents.
     // Always returns exactly 6 results — one per string — so callers can index
@@ -109,7 +110,7 @@ std::vector<DetectionResult> BandDetector::process()
 
     // ── Build the aggregate DetectionFrame (best valid band) ─────────────────
     const double time_sec = (_sample_rate > 0.0f)
-        ? static_cast<double>(_sample_count) / static_cast<double>(_sample_rate)
+        ? static_cast<double>(_sample_count.load(std::memory_order_relaxed)) / static_cast<double>(_sample_rate)
         : 0.0;
 
     DetectionFrame frame;
@@ -121,7 +122,7 @@ std::vector<DetectionResult> BandDetector::process()
     float best_per  = 0.0f;
     for (int b = 0; b < 6; ++b) {
         if (results[b].midi_note >= 0 && results[b].raw_freq > 0.0f
-                && results[b].periodicity >= _min_periodicity
+                && results[b].periodicity >= min_periodicity
                 && results[b].periodicity > best_per) {
             best_per  = results[b].periodicity;
             best_band = b;
@@ -161,7 +162,7 @@ std::vector<DetectionResult> BandDetector::process()
         _event_queue.push(ev);
     }
 
-    _latest_frame = frame;
+    store_latest_frame(frame);
     _frame_history.push(frame);
 
     // ── Build and push ChordFrame (per-string snapshot) ───────────────────────
@@ -180,7 +181,7 @@ std::vector<DetectionResult> BandDetector::process()
         chord.strings[b].confidence = r.periodicity;
         chord.strings[b].cents      = r.cents;
         chord.strings[b].active     = (r.midi_note >= 0 && r.raw_freq > 0.0f
-                                       && r.periodicity >= _min_periodicity);
+                                       && r.periodicity >= min_periodicity);
 
         // Compute fractional MIDI for the string component.
         if (r.raw_freq > 0.0f) {
@@ -199,6 +200,7 @@ std::vector<DetectionResult> BandDetector::process()
             }
         }
     }
+    store_latest_chord_frame(chord);
     _chord_queue.push(chord);
 
     return results;
@@ -213,10 +215,56 @@ void BandDetector::reset()
     for (auto& pd : _detectors)
         pd->reset();
     _ring.clear();
-    _sample_count        = 0;
+    _sample_count.store(0, std::memory_order_relaxed);
     _onset_cooldown_left = 0;
-    _latest_frame        = DetectionFrame{};
+    store_latest_frame(DetectionFrame{});
     _frame_history.clear();
     _event_queue.clear();
     _chord_queue.clear();
+    store_latest_chord_frame(ChordFrame{});
+}
+
+DetectionFrame BandDetector::latest_frame() const
+{
+    DetectionFrame out;
+    uint64_t seq = 0;
+    do {
+        seq = _latest_frame_seq.load(std::memory_order_acquire);
+        if (seq & 1u)
+            continue;
+        out = _latest_frame;
+    } while (seq != _latest_frame_seq.load(std::memory_order_acquire));
+    return out;
+}
+
+ChordFrame BandDetector::latest_chord_frame() const
+{
+    ChordFrame out;
+    uint64_t seq = 0;
+    do {
+        seq = _latest_chord_seq.load(std::memory_order_acquire);
+        if (seq & 1u)
+            continue;
+        out = _latest_chord_frame;
+    } while (seq != _latest_chord_seq.load(std::memory_order_acquire));
+    return out;
+}
+
+std::size_t BandDetector::available_samples() const noexcept
+{
+    return _ring.available();
+}
+
+void BandDetector::store_latest_frame(const DetectionFrame& frame) noexcept
+{
+    _latest_frame_seq.fetch_add(1, std::memory_order_release);
+    _latest_frame = frame;
+    _latest_frame_seq.fetch_add(1, std::memory_order_release);
+}
+
+void BandDetector::store_latest_chord_frame(const ChordFrame& frame) noexcept
+{
+    _latest_chord_seq.fetch_add(1, std::memory_order_release);
+    _latest_chord_frame = frame;
+    _latest_chord_seq.fetch_add(1, std::memory_order_release);
 }

@@ -1,5 +1,5 @@
 // audio_effect_qengine.hpp – Godot AudioEffectCapture subclass that feeds
-// captured mono bus audio into a BandDetector.
+// captured mono bus audio into an AsyncBandDetector worker thread.
 //
 // Architecture v2: the effect is a real-time analysis engine, not a gameplay
 // judge.  It exposes three tiers of data to GDScript:
@@ -28,7 +28,7 @@
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 
-#include "band_detector.hpp"
+#include "async_band_detector.hpp"
 
 namespace godot {
 
@@ -37,6 +37,7 @@ class AudioEffectQEngine : public AudioEffectCapture {
 
 public:
     static void _bind_methods();
+    ~AudioEffectQEngine() override = default;
 
     // ── GDScript API – legacy per-string tuner ────────────────────────────
 
@@ -100,7 +101,7 @@ private:
     double             min_periodicity = 0.85;
     PackedFloat32Array band_ranges;
 
-    std::unique_ptr<BandDetector> detector;
+    std::unique_ptr<AsyncBandDetector> detector;
 
     // Track last-built configuration to detect when rebuild is needed.
     double             cfg_sample_rate     = 0.0;
@@ -109,6 +110,7 @@ private:
     PackedFloat32Array cfg_band_ranges;
 
     void ensure_detector();
+    void queue_capture_audio();
     std::array<BandRange, 6> current_ranges() const;
 };
 

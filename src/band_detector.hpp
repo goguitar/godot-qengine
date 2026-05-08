@@ -2,7 +2,7 @@
 //
 // BandDetector wraps six cycfi/Q pitch_detector instances (one per guitar
 // string) and buffers incoming audio samples in a lock-free SPSC ring buffer
-// until process() is called on the consumer thread.
+// until process() is called on the analysis thread (typically a worker).
 //
 // New in architecture v2: BandDetector also maintains a per-call detection
 // snapshot (DetectionFrame), a fixed-size onset-event queue (NoteEvent), and
@@ -24,6 +24,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -376,7 +377,13 @@ public:
     // ── New API: real-time analysis state ────────────────────────────────
 
     /// Latest analysis snapshot written by the most recent process() call.
-    const DetectionFrame& latest_frame() const { return _latest_frame; }
+    DetectionFrame latest_frame() const;
+
+    /// Latest per-string chord snapshot written by the most recent process() call.
+    ChordFrame latest_chord_frame() const;
+
+    /// Return number of queued audio samples waiting for process().
+    std::size_t available_samples() const noexcept;
 
     /// Pop the oldest pending NoteEvent (SPSC FIFO).
     /// Returns false when the queue is empty.  Call in a loop each frame.
@@ -403,21 +410,27 @@ public:
 
     // ── Configuration ─────────────────────────────────────────────────────
 
-    void  set_min_periodicity(float v) { _min_periodicity = std::max(0.0f, std::min(1.0f, v)); }
-    float min_periodicity()  const     { return _min_periodicity; }
+    void  set_min_periodicity(float v) { _min_periodicity.store(std::max(0.0f, std::min(1.0f, v))); }
+    float min_periodicity()  const     { return _min_periodicity.load(); }
 
 private:
     std::array<std::unique_ptr<cycfi::q::pitch_detector>, 6> _detectors;
     AudioRingBuffer<RING_CAPACITY>                            _ring;
 
     float         _sample_rate        = 44100.0f;
-    float         _min_periodicity    = DEFAULT_MIN_PERIODICITY;
-    std::size_t   _sample_count       = 0;
+    std::atomic<float>         _min_periodicity{DEFAULT_MIN_PERIODICITY};
+    std::atomic<std::size_t>   _sample_count{0};
     std::size_t   _onset_cooldown_left = 0;
 
+    std::atomic<uint64_t> _latest_frame_seq{0};
     DetectionFrame _latest_frame;
+    std::atomic<uint64_t> _latest_chord_seq{0};
+    ChordFrame _latest_chord_frame;
 
     SPSCFrameHistory<DetectionFrame, FRAME_HISTORY_SIZE> _frame_history;
     SPSCEventQueue<NoteEvent,        EVENT_QUEUE_SIZE>    _event_queue;
     SPSCEventQueue<ChordFrame,       CHORD_QUEUE_SIZE>    _chord_queue;
+
+    void store_latest_frame(const DetectionFrame& frame) noexcept;
+    void store_latest_chord_frame(const ChordFrame& frame) noexcept;
 };

@@ -224,12 +224,12 @@ void QEngineDetectorNode::init_detector()
     if (band_ranges.size() < 12)
         return;
 
-    detector = std::make_unique<BandDetector>(
+    detector = std::make_unique<AsyncBandDetector>(
         static_cast<float>(sample_rate),
         current_ranges(),
-        static_cast<float>(threshold_db)
+        static_cast<float>(threshold_db),
+        static_cast<float>(min_periodicity)
     );
-    detector->set_min_periodicity(static_cast<float>(min_periodicity));
 }
 
 void QEngineDetectorNode::push_samples(const PackedFloat32Array& samples)
@@ -244,7 +244,19 @@ Array QEngineDetectorNode::poll_notes()
     if (!detector)
         return Array();
 
-    auto results = detector->process();
+    auto chord = detector->latest_chord_frame();
+    std::vector<DetectionResult> results;
+    results.reserve(6);
+    for (int b = 0; b < 6; ++b) {
+        const auto& sc = chord.strings[b];
+        results.push_back(DetectionResult{
+            b,
+            sc.pitch_hz,
+            sc.confidence,
+            sc.midi_note,
+            sc.cents
+        });
+    }
     apply_q_filters(results, static_cast<float>(min_periodicity));
 
     Array out;
@@ -267,7 +279,7 @@ Array QEngineDetectorNode::poll_notes()
 void QEngineDetectorNode::reset()
 {
     if (detector) {
-        detector->reset();
+        detector->request_reset();
     }
 }
 

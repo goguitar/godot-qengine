@@ -16,14 +16,14 @@ Guitar/bass audio
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Godot audio bus  (GuitarIn)                                         │
 │    AudioEffectQEngine  ←  extends AudioEffectCapture                 │
-│      drains capture buffer (stereo → mono)                           │
+│      audio thread writes capture buffer (stereo → mono)              │
 └─────────────────────────────────────────────────────────────────────┘
-                      │ PCM samples
+                      │ PCM samples (main thread drains)              
                       ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  BandDetector  (C++)                                                  │
-│    6 × cycfi::q::pitch_detector  (one per guitar string)             │
-│    SPSC audio ring buffer  (audio thread → main thread safe)         │
+│  AsyncBandDetector (worker thread)                                   │
+│    SPSC audio ring buffer  (main/audio thread → worker)              │
+│    BandDetector runs 6 × cycfi::q::pitch_detector                    │
 │                                                                       │
 │  Outputs four data tiers via SPSC ring buffers:                      │
 │    ① latest DetectionFrame  – best-pitch snapshot                    │
@@ -50,6 +50,11 @@ The C++ layer is a **real-time audio analysis engine**, not a gameplay judge.
 It answers *"what did the audio observe?"*  
 GDScript answers *"does that match what the chart expects?"*
 
+**Threading model:** the Godot audio thread writes into AudioEffectCapture's
+buffer, the main thread drains that buffer and enqueues samples into the
+SPSC ring, and a dedicated worker thread runs QLib analysis.  The worker never
+calls Godot APIs; it only processes audio and fills the result queues.
+
 | Layer | Responsibility |
 |---|---|
 | `AudioEffectQEngine` / `BandDetector` | Pitch detection, onset detection, level tracking, per-string chord data, SPSC state export |
@@ -60,6 +65,7 @@ GDScript answers *"does that match what the chart expects?"*
 | Path | Purpose |
 |---|---|
 | `src/band_detector.hpp/.cpp` | `BandDetector`, `StringComponent`, `ChordFrame`, `NoteEvent`, `DetectionFrame`, `SPSCEventQueue<T,N>`, `SPSCFrameHistory<T,N>`, `AudioRingBuffer<N>` |
+| `src/async_band_detector.hpp/.cpp` | `AsyncBandDetector` worker-thread wrapper for BandDetector |
 | `src/audio_effect_qengine.hpp/.cpp` | Godot `AudioEffectQEngine` (extends `AudioEffectCapture`) |
 | `src/detector_node.hpp/.cpp` | Godot `QEngineDetectorNode` (extends `Node`) |
 | `src/register_types.cpp` | GDExtension entry point (`godot_qengine_init`) |

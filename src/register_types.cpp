@@ -11,6 +11,7 @@
 
 #include "audio_effect_qengine.hpp"
 #include "detector_node.hpp"
+#include "async_band_detector.hpp"
 
 using namespace godot;
 
@@ -25,7 +26,7 @@ static void initialize_qengine_module(ModuleInitializationLevel p_level)
 
 static void uninitialize_qengine_module(ModuleInitializationLevel /*p_level*/)
 {
-    // Nothing to clean up.
+    AsyncBandDetector::shutdown_all();
 }
 
 extern "C" {

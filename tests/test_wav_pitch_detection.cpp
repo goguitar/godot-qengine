@@ -590,7 +590,7 @@ static void test_wav_latest_frame_snapshot()
         if (det.latest_frame().pitch_valid) any_valid = true;
     }
 
-    const DetectionFrame& fr = det.latest_frame();
+    DetectionFrame fr = det.latest_frame();
     const double expected_time =
         static_cast<double>(wav.samples.size()) / static_cast<double>(wav.sample_rate);
 

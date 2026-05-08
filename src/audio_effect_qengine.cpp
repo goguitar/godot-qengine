@@ -211,23 +211,21 @@ Array AudioEffectQEngine::poll_notes()
         return out;
     }
 
-    // Drain the Godot capture buffer.
-    const int64_t available = get_frames_available();
-    if (available > 0) {
-        const PackedVector2Array frames = get_buffer(available);
-        const int64_t            n      = frames.size();
-        const Vector2*           data   = frames.ptr();
+    queue_capture_audio();
 
-        std::vector<float> mono(static_cast<std::size_t>(n));
-        for (int64_t i = 0; i < n; ++i)
-            mono[i] = data[i].x;
-
-        detector->push_samples(mono.data(), mono.size());
+    auto chord = detector->latest_chord_frame();
+    std::vector<DetectionResult> results;
+    results.reserve(6);
+    for (int b = 0; b < 6; ++b) {
+        const auto& sc = chord.strings[b];
+        results.push_back(DetectionResult{
+            b,
+            sc.pitch_hz,
+            sc.confidence,
+            sc.midi_note,
+            sc.cents
+        });
     }
-
-    // Drain ring → detectors, then return 7 rows:
-    // 6 per-string rows plus a chord summary row at index 6.
-    auto results = detector->process();
     apply_q_filters(results, static_cast<float>(min_periodicity));
 
     Array out;
@@ -251,6 +249,8 @@ Array AudioEffectQEngine::poll_notes()
 
 Dictionary AudioEffectQEngine::get_latest_detection() const
 {
+    const_cast<AudioEffectQEngine*>(this)->ensure_detector();
+    const_cast<AudioEffectQEngine*>(this)->queue_capture_audio();
     if (!detector)
         return frame_to_dict(DetectionFrame{});
     return frame_to_dict(detector->latest_frame());
@@ -263,6 +263,8 @@ Dictionary AudioEffectQEngine::get_latest_detection() const
 Array AudioEffectQEngine::pop_note_events()
 {
     Array out;
+    ensure_detector();
+    queue_capture_audio();
     if (!detector)
         return out;
     NoteEvent ev;
@@ -278,6 +280,8 @@ Array AudioEffectQEngine::pop_note_events()
 Array AudioEffectQEngine::get_frame_history(int count) const
 {
     Array out;
+    const_cast<AudioEffectQEngine*>(this)->ensure_detector();
+    const_cast<AudioEffectQEngine*>(this)->queue_capture_audio();
     if (!detector || count <= 0)
         return out;
     const std::size_t n = static_cast<std::size_t>(count);
@@ -295,6 +299,8 @@ Array AudioEffectQEngine::get_frame_history(int count) const
 Array AudioEffectQEngine::pop_chord_frames()
 {
     Array out;
+    ensure_detector();
+    queue_capture_audio();
     if (!detector)
         return out;
     ChordFrame cf;
@@ -310,7 +316,7 @@ Array AudioEffectQEngine::pop_chord_frames()
 void AudioEffectQEngine::reset()
 {
     if (detector) {
-        detector->reset();
+        detector->request_reset();
     }
     clear_buffer();
 }
@@ -341,27 +347,50 @@ void AudioEffectQEngine::ensure_detector()
     }
 
     bool needs_rebuild = !detector
-        || cfg_sample_rate     != sample_rate
-        || cfg_threshold_db    != threshold_db
-        || cfg_min_periodicity != min_periodicity
-        || cfg_band_ranges     != band_ranges;
+        || cfg_sample_rate  != sample_rate
+        || cfg_threshold_db != threshold_db
+        || cfg_band_ranges  != band_ranges;
 
     if (!needs_rebuild) {
+        if (cfg_min_periodicity != min_periodicity && detector) {
+            detector->set_min_periodicity(static_cast<float>(min_periodicity));
+            cfg_min_periodicity = min_periodicity;
+        }
         return;
     }
 
-    detector = std::make_unique<BandDetector>(
+    detector = std::make_unique<AsyncBandDetector>(
         static_cast<float>(sample_rate),
         current_ranges(),
-        static_cast<float>(threshold_db)
+        static_cast<float>(threshold_db),
+        static_cast<float>(min_periodicity)
     );
-    detector->set_min_periodicity(static_cast<float>(min_periodicity));
 
     cfg_sample_rate     = sample_rate;
     cfg_threshold_db    = threshold_db;
     cfg_min_periodicity = min_periodicity;
     cfg_band_ranges     = band_ranges;
     clear_buffer();
+}
+
+void AudioEffectQEngine::queue_capture_audio()
+{
+    if (!detector)
+        return;
+
+    const int64_t available = get_frames_available();
+    if (available <= 0)
+        return;
+
+    const PackedVector2Array frames = get_buffer(available);
+    const int64_t            n      = frames.size();
+    const Vector2*           data   = frames.ptr();
+
+    std::vector<float> mono(static_cast<std::size_t>(n));
+    for (int64_t i = 0; i < n; ++i)
+        mono[i] = data[i].x;
+
+    detector->push_samples(mono.data(), mono.size());
 }
 
 } // namespace godot
