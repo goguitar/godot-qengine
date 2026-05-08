@@ -20,22 +20,11 @@ jobs:
       - name: Prepare build directory
         run: mkdir -p build
 
-      - name: Cache godot-cpp build
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/_deps/godotcpp-src
-            build/_deps/godotcpp-build
-            build/_deps/godotcpp-subbuild
-          key: ${{ runner.os }}-godotcpp-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-godotcpp-
-
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build test executables
-        run: cmake --build build --target qengine_tests qengine_wav_tests --config Release
+        run: cmake --build build --target qengine_tests qengine_wav_tests qengine_ffi_tests --config Release
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
@@ -90,17 +79,6 @@ jobs:
       - name: Prepare build directory
         run: mkdir -p build
 
-      - name: Cache godot-cpp build
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/_deps/godotcpp-src
-            build/_deps/godotcpp-build
-            build/_deps/godotcpp-subbuild
-          key: ${{ runner.os }}-godotcpp-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-godotcpp-
-
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
@@ -154,7 +132,7 @@ jobs:
 
           cat > package/addons/qengine/godot-qengine.gdextension <<'EOF'
           [configuration]
-          entry_symbol = "godot_qengine_init"
+          entry_symbol = "gdext_rust_init"
           compatibility_minimum = "4.4"
 
           [libraries]
