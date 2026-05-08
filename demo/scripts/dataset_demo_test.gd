@@ -21,9 +21,11 @@ static func freq_to_note_display(freq: float) -> String:
 func _init() -> void:
 	await process_frame
 
+	var added_effect: AudioEffect = null
 	var effect = _get_qengine_effect_on_capture()
 	if effect == null:
 		effect = _add_qengine_effect_on_capture()
+		added_effect = effect
 	if effect == null:
 		push_error("QEngine effect not found on GuitarIn bus")
 		quit(1)
@@ -40,9 +42,6 @@ func _init() -> void:
 		return
 
 	var root: Window = get_root()
-	var player := AudioStreamPlayer.new()
-	player.bus = "GuitarIn"
-	root.add_child(player)
 
 	var tested: int = 0
 	var passed: int = 0
@@ -54,6 +53,9 @@ func _init() -> void:
 		if stream == null:
 			continue
 
+		var player := AudioStreamPlayer.new()
+		player.bus = "GuitarIn"
+		root.add_child(player)
 		player.stream = stream
 		effect.reset()
 		player.play()
@@ -63,30 +65,56 @@ func _init() -> void:
 		var start_ms: int = Time.get_ticks_msec()
 		while player.playing and (Time.get_ticks_msec() - start_ms) < int(MAX_SECONDS_PER_FILE * 1000.0):
 			await process_frame
-			var notes: Array = effect.poll_notes()
-			for item in notes:
-				var freq: float = float(item.get("frequency", 0.0))
-				var note: String = freq_to_note_display(freq)
-				if note.is_empty():
+			var frames: Array = effect.pop_chord_frames()
+			for cf in frames:
+				var active_count: int = int(cf.get("active_count", 0))
+				var dom_midi: int = int(cf.get("dominant_midi", -1))
+				if active_count <= 0 or dom_midi < 0:
 					continue
-				var note_class: String = _normalize_note_class(_detected_note_class(note))
+				var note_class: String = _normalize_note_class(_midi_note_class(dom_midi))
+				if note_class.is_empty():
+					continue
 				counts[note_class] = int(counts.get(note_class, 0)) + 1
 
 		player.stop()
+		var playback = player.get_stream_playback()
+		if playback != null:
+			playback.stop()
+			playback.free()
+		player.stream = null
+		if stream != null:
+			stream.free()
+		stream = null
+		if player.get_parent() != null:
+			player.get_parent().remove_child(player)
+		player.free()
+		for _i in 3:
+			await process_frame
 
 		var detected: String = _top_detected(counts)
-		var ok: bool = (expected != "" and int(counts.get(expected, 0)) >= 3)
+		var expected_hits: int = int(counts.get(expected, 0))
+		var ok: bool = (expected != "" and detected == expected and expected_hits >= 3)
 		tested += 1
 		if ok:
 			passed += 1
 
-		print("expected=%s played=%s detected=%s hits=%d file=%s" % [
-			expected,
+		var status: String = "PASS" if ok else "FAIL"
+		print("%s expected=%s detected=%s hits=%d file=%s" % [
+			status,
 			expected,
 			detected,
-			int(counts.get(expected, 0)),
+			expected_hits,
 			file_path.get_file(),
 		])
+
+	if added_effect != null:
+		_remove_qengine_effect(added_effect)
+		added_effect = null
+	effect = null
+	while AudioServer.get_bus_count() > 1:
+		AudioServer.remove_bus(AudioServer.get_bus_count() - 1)
+	for _i in 3:
+		await process_frame
 
 	print("demo_dataset_test: passed=%d tested=%d" % [passed, tested])
 	quit(0 if tested > 0 and passed == tested else 1)
@@ -135,7 +163,8 @@ func _list_dataset_files(dataset_dir: String) -> PackedStringArray:
 			break
 		if dir.current_is_dir():
 			continue
-		if not entry.to_lower().ends_with("_solo_mic.wav"):
+		var lower_entry := entry.to_lower()
+		if not (lower_entry.ends_with("_solo_mic.wav") or lower_entry.ends_with("_comp_mic.wav")):
 			continue
 		files.append(dataset_dir.path_join(entry))
 	dir.list_dir_end()
@@ -159,6 +188,11 @@ func _detected_note_class(note: String) -> String:
 	if note.length() >= 1:
 		return note.substr(0, 1)
 	return ""
+
+func _midi_note_class(midi: int) -> String:
+	if midi < 0 or midi > 127:
+		return ""
+	return NOTE_NAMES[int(midi) % 12]
 
 func _normalize_note_class(note: String) -> String:
 	match note:
@@ -192,3 +226,12 @@ func _top_detected(counts: Dictionary) -> String:
 			top_count = c
 			top_note = String(k)
 	return top_note
+
+func _remove_qengine_effect(fx: AudioEffect) -> void:
+	var bus_idx: int = AudioServer.get_bus_index("GuitarIn")
+	if bus_idx < 0:
+		return
+	for i in AudioServer.get_bus_effect_count(bus_idx):
+		if AudioServer.get_bus_effect(bus_idx, i) == fx:
+			AudioServer.remove_bus_effect(bus_idx, i)
+			return
