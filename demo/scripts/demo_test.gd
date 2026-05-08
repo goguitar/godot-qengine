@@ -4,6 +4,7 @@ const INSTRUMENTS: PackedStringArray = ["Guitar", "Bass"]
 const GUITAR_TUNINGS: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC"]
 const BASS_TUNINGS: PackedStringArray = ["Standard", "DropD"]
 const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
+const NOTE_NAMES := ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 @onready var _back_button: Button = $RootMargin/RootVBox/Top/BackButton
 @onready var _instrument_opt: OptionButton = $RootMargin/RootVBox/Controls/ControlsHBox/InstrumentOption
@@ -55,7 +56,7 @@ func _process(_delta: float) -> void:
 		_play_current_file()
 
 	if _audio_effect and _playing:
-		_update_detected(_audio_effect.poll_notes())
+		_update_detected()
 
 func _toggle_play() -> void:
 	_playing = not _playing
@@ -230,22 +231,34 @@ func _load_wav(path: String) -> AudioStreamWAV:
 		return ResourceLoader.load(path, "AudioStreamWAV") as AudioStreamWAV
 	return AudioStreamWAV.load_from_file(path)
 
-func _update_detected(notes: Array) -> void:
-	var best: Dictionary = {}
-	var best_conf := -1.0
-	for item in notes:
-		var conf: float = item.get("periodicity", 0.0)
-		if conf > best_conf:
-			best_conf = conf
-			best = item
-	if best_conf < 0.0:
-		return
+func _update_detected() -> void:
+	var latest: Dictionary = _audio_effect.get_latest_detection()
+	var freq: float = float(latest.get("pitch_hz", 0.0))
+	var conf: float = float(latest.get("confidence", 0.0))
+	var note: String = _note_class_from_midi(int(latest.get("midi_note", -1)))
 
-	var note: String = String(best.get("note", ""))
-	var freq: float = best.get("frequency", 0.0)
+	var chord_frames: Array = _audio_effect.pop_chord_frames()
+	if not chord_frames.is_empty():
+		var chord: Dictionary = chord_frames[chord_frames.size() - 1]
+		var dom_midi: int = int(chord.get("dominant_midi", -1))
+		var dom_note: String = _note_class_from_midi(dom_midi)
+		if not dom_note.is_empty():
+			note = dom_note
+		var dom_freq: float = float(chord.get("dominant_pitch_hz", 0.0))
+		if dom_freq > 0.0:
+			freq = dom_freq
+		var dom_conf: float = float(chord.get("dominant_confidence", 0.0))
+		if dom_conf > 0.0:
+			conf = dom_conf
+
 	_detected.text = "Detected: %s" % (note if note != "" else "--")
 	_frequency.text = "Frequency: %.1f Hz" % freq if freq > 0.0 else "Frequency: --"
-	_confidence.text = "Confidence: %.0f%%" % (best_conf * 100.0)
+	_confidence.text = "Confidence: %.0f%%" % (conf * 100.0)
+
+func _note_class_from_midi(midi: int) -> String:
+	if midi < 0 or midi > 127:
+		return ""
+	return NOTE_NAMES[((midi % 12) + 12) % 12]
 
 func _wanted_keys(instrument: String, tuning: String) -> PackedStringArray:
 	if instrument == "Bass":

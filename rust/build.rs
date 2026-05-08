@@ -4,6 +4,7 @@ fn main() {
     if let Ok(lib_dir) = env::var("QENGINE_FFI_LIB_DIR") {
         println!("cargo:rustc-link-search=native={lib_dir}");
         println!("cargo:rustc-link-lib=static=qengine_ffi");
+        println!("cargo:rustc-link-lib=static=qengine_core");
         if env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default() != "msvc" {
             println!("cargo:rustc-link-lib=dylib=stdc++");
         }
