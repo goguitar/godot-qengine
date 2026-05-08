@@ -13,7 +13,7 @@ target_compile_options(qengine_tests PRIVATE
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>
 )
 
-add_test(NAME pitch_detection COMMAND qengine_tests)
+add_test(NAME pitch_detection COMMAND $<TARGET_FILE:qengine_tests>)
 
 # ── Real-audio WAV pitch detection tests (GuitarSet dataset) ────────────────
 add_executable(qengine_wav_tests test_wav_pitch_detection.cpp)
@@ -29,4 +29,4 @@ target_compile_definitions(qengine_wav_tests PRIVATE
     QENGINE_DATASET_DIR="${CMAKE_SOURCE_DIR}/demo/tests/dataset/guitarset/audio/mic"
 )
 
-add_test(NAME wav_pitch_detection COMMAND qengine_wav_tests)
+add_test(NAME wav_pitch_detection COMMAND $<TARGET_FILE:qengine_wav_tests>)
