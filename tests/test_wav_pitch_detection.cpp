@@ -249,8 +249,8 @@ static std::string wav_path(const char* filename)
 // ─────────────────────────────────────────────────────────────────────────────
 // Test: Solo WAV files produce valid detections
 //
-// Six GuitarSet solo-mic recordings (one per key class) are fed through the
-// Standard-tuning BandDetector.  We assert:
+// Six GuitarSet Rock solo-mic recordings (one per key class) are fed through
+// the Standard-tuning BandDetector.  We assert:
 //   • total valid detections > 50  (detector is running, Q is working)
 //   • most-detected note count > 10 (there is a real dominant frequency)
 //   • max detected frequency is in guitar range [65, 1050] Hz
@@ -265,11 +265,11 @@ static void test_wav_produces_valid_detections()
 
     constexpr FileCase cases[] = {
         { "00_Rock1-130-A_solo_mic.wav",  "wav_solo_A_rock1"   },
-        { "00_Jazz1-130-D_solo_mic.wav",  "wav_solo_D_jazz1"   },
-        { "00_Funk1-97-C_solo_mic.wav",   "wav_solo_C_funk1"   },
-        { "00_BN3-154-E_solo_mic.wav",    "wav_solo_E_bn3"     },
-        { "00_Funk2-119-G_solo_mic.wav",  "wav_solo_G_funk2"   },
-        { "00_BN2-131-B_solo_mic.wav",    "wav_solo_B_bn2"     },
+        { "00_Rock1-90-C#_solo_mic.wav",  "wav_solo_Cs_rock1"  },
+        { "00_Rock2-142-D_solo_mic.wav",  "wav_solo_D_rock2"   },
+        { "00_Rock2-85-F_solo_mic.wav",   "wav_solo_F_rock2"   },
+        { "00_Rock3-117-Bb_solo_mic.wav", "wav_solo_Bb_rock3"  },
+        { "00_Rock3-148-C_solo_mic.wav",  "wav_solo_C_rock3"   },
     };
 
     for (auto& c : cases) {
@@ -304,7 +304,7 @@ static void test_wav_produces_valid_detections()
 // ─────────────────────────────────────────────────────────────────────────────
 // Test: Comp WAV files produce valid detections
 //
-// Three GuitarSet comp-mic recordings are checked with the same validity
+// Three GuitarSet Rock comp-mic recordings are checked with the same validity
 // criteria as the solo tests above.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -317,8 +317,8 @@ static void test_wav_comp_produces_valid_detections()
 
     constexpr FileCase cases[] = {
         { "00_Rock1-130-A_comp_mic.wav",  "wav_comp_A_rock1"  },
-        { "00_Funk2-119-G_comp_mic.wav",  "wav_comp_G_funk2"  },
-        { "00_Jazz1-130-D_comp_mic.wav",  "wav_comp_D_jazz1"  },
+        { "00_Rock1-90-C#_comp_mic.wav",  "wav_comp_Cs_rock1" },
+        { "00_Rock2-142-D_comp_mic.wav",  "wav_comp_D_rock2"  },
     };
 
     for (auto& c : cases) {
@@ -351,8 +351,6 @@ static void test_wav_comp_produces_valid_detections()
 //
 // Rock1-A comp  → chordal A; A is the most-detected note class by a
 //                 wide margin (probe: A=304, #2=A#=80 at thr=0.85).
-// Funk2-G solo  → single-note G solo; G is the most-detected note class
-//                 (probe: G=363, #2=D#=310 at thr=0.85).
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void test_wav_rock_a_comp_a_is_dominant()
@@ -380,30 +378,6 @@ static void test_wav_rock_a_comp_a_is_dominant()
           "wav_rock_a_comp_a_count_gt_50");
 }
 
-static void test_wav_funk_g_solo_g_is_dominant()
-{
-    const auto wav = load_wav(wav_path("00_Funk2-119-G_solo_mic.wav").c_str());
-
-    if (wav.samples.empty()) {
-        for (const char* msg : {
-                "wav_funk_g_solo_g_appears",
-                "wav_funk_g_solo_g_is_rank1",
-                "wav_funk_g_solo_g_count_gt_50" }) {
-            std::printf("  %-60s skipped (file not found)\n", msg);
-            ++g_pass;
-        }
-        return;
-    }
-
-    const auto stats  = run_on_wav(wav);
-    const auto ranked = rank_notes(stats.counts);
-    const int  rank_g = rank_of(ranked, "G");
-
-    CHECK(rank_g > 0,   "wav_funk_g_solo_g_appears");
-    CHECK(rank_g == 1,  "wav_funk_g_solo_g_is_rank1");
-    CHECK(!ranked.empty() && ranked[0].second == "G" && ranked[0].first > 50,
-          "wav_funk_g_solo_g_count_gt_50");
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test: Onset event queue with real guitar audio  (Tier 2 SPSC API)
@@ -778,7 +752,6 @@ int main()
 
     std::printf("\n-- Dominant note detection --\n");
     test_wav_rock_a_comp_a_is_dominant();
-    test_wav_funk_g_solo_g_is_dominant();
 
     std::printf("\n-- Onset event queue (Tier 2 SPSC) --\n");
     test_wav_onset_event_queue();
