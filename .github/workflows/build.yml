@@ -16,8 +16,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Prepare build directory
+        run: mkdir -p build
+
+      - name: Cache godot-cpp build
+        uses: actions/cache@v4
         with:
-          submodules: recursive
+          path: |
+            build/_deps/godotcpp-src
+            build/_deps/godotcpp-build
+            build/_deps/godotcpp-subbuild
+          key: ${{ runner.os }}-godotcpp-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-godotcpp-
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -30,11 +42,6 @@ jobs:
 
       - name: Build Linux shared library
         run: cmake --build build --target godot_qengine --config Release
-
-      - name: Prepare library for headless demo test
-        run: |
-          mkdir -p demo/addons/qengine/bin
-          cp build/libgodot_qengine.so demo/addons/qengine/bin/
 
       - name: Download Godot 4.4.1 headless
         run: |
@@ -79,8 +86,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Prepare build directory
+        run: mkdir -p build
+
+      - name: Cache godot-cpp build
+        uses: actions/cache@v4
         with:
-          submodules: recursive
+          path: |
+            build/_deps/godotcpp-src
+            build/_deps/godotcpp-build
+            build/_deps/godotcpp-subbuild
+          key: ${{ runner.os }}-godotcpp-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-godotcpp-
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release

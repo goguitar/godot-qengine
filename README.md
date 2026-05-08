@@ -65,8 +65,8 @@ GDScript answers *"does that match what the chart expects?"*
 | `src/register_types.cpp` | GDExtension entry point (`godot_qengine_init`) |
 | `tests/test_pitch_detection.cpp` | Standalone C++ tests (no Godot required) |
 | `tests/test_wav_pitch_detection.cpp` | Real-audio WAV tests using GuitarSet dataset |
-| `third_party/q` | cycfi/Q (git submodule) |
-| `third_party/infra` | cycfi/infra (git submodule) |
+| *(auto-fetched)* | cycfi/Q — downloaded by CMake FetchContent at configure time |
+| *(auto-fetched)* | cycfi/infra — downloaded by CMake FetchContent at configure time |
 
 ---
 
@@ -218,24 +218,22 @@ for i in 6:
 | C++ compiler | GCC 12+, Clang 16+, or MSVC 2022+ (C++20 required) |
 | CMake | 3.22+ |
 | Godot | 4.4+ |
-| git | for submodule checkout |
+| git | for cloning the repository |
 
 ---
 
 ## Getting started
 
-### 1. Clone with submodules
+### 1. Clone the repository
 
 ```bash
-git clone --recurse-submodules https://github.com/goguitar/godot-qengine.git
+git clone https://github.com/goguitar/godot-qengine.git
 cd godot-qengine
 ```
 
-If you already cloned without `--recurse-submodules`:
-
-```bash
-git submodule update --init --recursive
-```
+No submodule init is needed — all C++ dependencies (godot-cpp, cycfi/Q,
+cycfi/infra) are downloaded automatically by CMake FetchContent at configure
+time.
 
 ### 2. Build the GDExtension
 
@@ -244,13 +242,14 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target godot_qengine --config Release
 ```
 
-The compiled library lands in `build/`:
+The compiled library lands in `build/` **and is automatically copied** to
+`demo/addons/qengine/bin/` so the demo project is immediately usable:
 
-| Platform | File |
-|---|---|
-| Linux | `build/libgodot_qengine.so` |
-| macOS | `build/libgodot_qengine.dylib` |
-| Windows | `build/godot_qengine.dll` (or `build/Release/`) |
+| Platform | Build output | Demo addon copy |
+|---|---|---|
+| Linux | `build/libgodot_qengine.so` | `demo/addons/qengine/bin/libgodot_qengine.so` |
+| macOS | `build/libgodot_qengine.dylib` | `demo/addons/qengine/bin/libgodot_qengine.dylib` |
+| Windows | `build/godot_qengine.dll` | `demo/addons/qengine/bin/godot_qengine.dll` |
 
 ### 3. Run the demo
 
@@ -388,8 +387,8 @@ godot-cpp is MIT licensed.
 | `src/detector_node.hpp/.cpp` | Godot `QEngineDetectorNode` (extends `Node`) |
 | `src/register_types.cpp` | GDExtension entry point (`godot_qengine_init`) |
 | `tests/test_pitch_detection.cpp` | Standalone C++ tests (no Godot required) |
-| `third_party/q` | cycfi/Q (git submodule) |
-| `third_party/infra` | cycfi/infra (git submodule) |
+| *(auto-fetched)* | cycfi/Q — downloaded by CMake FetchContent at configure time |
+| *(auto-fetched)* | cycfi/infra — downloaded by CMake FetchContent at configure time |
 
 ---
 
@@ -412,24 +411,22 @@ godot-cpp is MIT licensed.
 | C++ compiler | GCC 12+, Clang 16+, or MSVC 2022+ (C++20 required) |
 | CMake | 3.22+ |
 | Godot | 4.4+ |
-| git | for submodule checkout |
+| git | for cloning the repository |
 
 ---
 
 ## Getting started
 
-### 1. Clone with submodules
+### 1. Clone the repository
 
 ```bash
-git clone --recurse-submodules https://github.com/goguitar/godot-qengine.git
+git clone https://github.com/goguitar/godot-qengine.git
 cd godot-qengine
 ```
 
-If you already cloned without `--recurse-submodules`:
-
-```bash
-git submodule update --init --recursive
-```
+No submodule init is needed — all C++ dependencies (godot-cpp, cycfi/Q,
+cycfi/infra) are downloaded automatically by CMake FetchContent at configure
+time.
 
 ### 2. Build the GDExtension
 
@@ -441,13 +438,14 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target godot_qengine --config Release
 ```
 
-The compiled library lands in `build/`:
+The compiled library lands in `build/` **and is automatically copied** to
+`demo/addons/qengine/bin/` so the demo project is immediately usable:
 
-| Platform | File |
-|---|---|
-| Linux | `build/libgodot_qengine.so` |
-| macOS | `build/libgodot_qengine.dylib` |
-| Windows | `build/godot_qengine.dll` (or `build/Release/`) |
+| Platform | Build output | Demo addon copy |
+|---|---|---|
+| Linux | `build/libgodot_qengine.so` | `demo/addons/qengine/bin/libgodot_qengine.so` |
+| macOS | `build/libgodot_qengine.dylib` | `demo/addons/qengine/bin/libgodot_qengine.dylib` |
+| Windows | `build/godot_qengine.dll` | `demo/addons/qengine/bin/godot_qengine.dll` |
 
 ### 3. Run the demo
 

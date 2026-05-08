@@ -519,54 +519,54 @@ func _build_string_labels() -> void:
 				lbl.text = "—"
 			_strings_grid.add_child(lbl)
 			row.append(lbl)
-_band_labels.append(row)
+		_band_labels.append(row)
 
 ## Build the per-string chord-detection panel (Tier 4 / ChordFrame display).
 ## Creates a GridContainer with a header row + 6 string rows + a dominant note
 ## label, appended dynamically below the status bar.
 func _build_chord_panel() -> void:
-var vbox: VBoxContainer = get_node_or_null("VBox") as VBoxContainer
-if vbox == null:
-return
+	var vbox: VBoxContainer = get_node_or_null("VBox") as VBoxContainer
+	if vbox == null:
+		return
 
-# Section heading
-var heading := Label.new()
-heading.text = "Per-String Chord Detection (Tier 4)"
-heading.add_theme_font_size_override("font_size", 13)
-heading.modulate = Color(0.8, 0.8, 1.0)
-vbox.add_child(heading)
+	# Section heading
+	var heading := Label.new()
+	heading.text = "Per-String Chord Detection (Tier 4)"
+	heading.add_theme_font_size_override("font_size", 13)
+	heading.modulate = Color(0.8, 0.8, 1.0)
+	vbox.add_child(heading)
 
-# Header row
-var grid := GridContainer.new()
-grid.columns = 5
-vbox.add_child(grid)
+	# Header row
+	var grid := GridContainer.new()
+	grid.columns = 5
+	vbox.add_child(grid)
 
-for h in ["String", "Note", "Hz", "Conf.", "Active?"]:
-var hdr := Label.new()
-hdr.text = h
-hdr.add_theme_font_size_override("font_size", 13)
-hdr.modulate = Color(0.8, 0.8, 1.0)
-grid.add_child(hdr)
+	for h in ["String", "Note", "Hz", "Conf.", "Active?"]:
+		var hdr := Label.new()
+		hdr.text = h
+		hdr.add_theme_font_size_override("font_size", 13)
+		hdr.modulate = Color(0.8, 0.8, 1.0)
+		grid.add_child(hdr)
 
-# String rows
-var string_labels := ["6 (Low)", "5", "4", "3", "2", "1 (High)"]
-for i in 6:
-var row: Array = []
-for col in 5:
-var lbl := Label.new()
-lbl.custom_minimum_size = Vector2(90, 0)
-lbl.add_theme_font_size_override("font_size", 14)
-lbl.text = string_labels[i] if col == 0 else "—"
-grid.add_child(lbl)
-row.append(lbl)
-_chord_labels.append(row)
+	# String rows
+	var string_labels := ["6 (Low)", "5", "4", "3", "2", "1 (High)"]
+	for i in 6:
+		var row: Array = []
+		for col in 5:
+			var lbl := Label.new()
+			lbl.custom_minimum_size = Vector2(90, 0)
+			lbl.add_theme_font_size_override("font_size", 14)
+			lbl.text = string_labels[i] if col == 0 else "—"
+			grid.add_child(lbl)
+			row.append(lbl)
+		_chord_labels.append(row)
 
-# Dominant / root note label
-_dominant_label = Label.new()
-_dominant_label.text = "Dominant: —"
-_dominant_label.add_theme_font_size_override("font_size", 13)
-_dominant_label.modulate = Color(1.0, 1.0, 0.6)
-vbox.add_child(_dominant_label)
+	# Dominant / root note label
+	_dominant_label = Label.new()
+	_dominant_label.text = "Dominant: —"
+	_dominant_label.add_theme_font_size_override("font_size", 13)
+	_dominant_label.modulate = Color(1.0, 1.0, 0.6)
+	vbox.add_child(_dominant_label)
 
 ## Update the chord panel with the latest ChordFrame dictionary.
 ## Each frame has: time_sec, level, dominant_band, dominant_midi,
@@ -577,42 +577,42 @@ vbox.add_child(_dominant_label)
 ##   Green  = string active (detected above min_periodicity threshold)
 ##   Grey   = string inactive / muted
 func _update_chord_panel(cf: Dictionary) -> void:
-if _chord_labels.is_empty():
-return
+	if _chord_labels.is_empty():
+		return
 
-var strings: Array = cf.get("strings", [])
-for i in min(strings.size(), _chord_labels.size()):
-var sc: Dictionary = strings[i]
-var row: Array = _chord_labels[i]
-var active: bool  = bool(sc.get("active", false))
-var midi: int     = int(sc.get("midi_note", -1))
-var hz: float     = float(sc.get("pitch_hz", 0.0))
-var conf: float   = float(sc.get("confidence", 0.0))
+	var strings: Array = cf.get("strings", [])
+	for i in min(strings.size(), _chord_labels.size()):
+		var sc: Dictionary = strings[i]
+		var row: Array = _chord_labels[i]
+		var active: bool  = bool(sc.get("active", false))
+		var midi: int     = int(sc.get("midi_note", -1))
+		var hz: float     = float(sc.get("pitch_hz", 0.0))
+		var conf: float   = float(sc.get("confidence", 0.0))
 
-if active and midi >= 0:
-row[1].text     = midi_to_note_display(midi)
-row[2].text     = "%.1f" % hz
-row[3].text     = "%.0f%%" % (conf * 100.0)
-row[4].text     = "YES"
-row[1].modulate = Color.GREEN
-row[4].modulate = Color.GREEN
-else:
-row[1].text     = "—"
-row[2].text     = "—"
-row[3].text     = "—"
-row[4].text     = "muted"
-row[1].modulate = Color(0.5, 0.5, 0.5)
-row[4].modulate = Color(0.4, 0.4, 0.4)
+		if active and midi >= 0:
+			row[1].text     = midi_to_note_display(midi)
+			row[2].text     = "%.1f" % hz
+			row[3].text     = "%.0f%%" % (conf * 100.0)
+			row[4].text     = "YES"
+			row[1].modulate = Color.GREEN
+			row[4].modulate = Color.GREEN
+		else:
+			row[1].text     = "—"
+			row[2].text     = "—"
+			row[3].text     = "—"
+			row[4].text     = "muted"
+			row[1].modulate = Color(0.5, 0.5, 0.5)
+			row[4].modulate = Color(0.4, 0.4, 0.4)
 
-# Update dominant / root note line.
-if _dominant_label:
-var dom_midi: int   = int(cf.get("dominant_midi", -1))
-var dom_conf: float = float(cf.get("dominant_confidence", 0.0))
-var active_n: int   = int(cf.get("active_count", 0))
-if dom_midi >= 0:
-var dom_note: String = midi_to_note_display(dom_midi)
-_dominant_label.text = "Dominant: %s  conf %.0f%%  (%d string%s active)" % [
-dom_note, dom_conf * 100.0, active_n, "s" if active_n != 1 else ""
-]
-else:
-_dominant_label.text = "Dominant: —"
+	# Update dominant / root note line.
+	if _dominant_label:
+		var dom_midi: int   = int(cf.get("dominant_midi", -1))
+		var dom_conf: float = float(cf.get("dominant_confidence", 0.0))
+		var active_n: int   = int(cf.get("active_count", 0))
+		if dom_midi >= 0:
+			var dom_note: String = midi_to_note_display(dom_midi)
+			_dominant_label.text = "Dominant: %s  conf %.0f%%  (%d string%s active)" % [
+				dom_note, dom_conf * 100.0, active_n, "s" if active_n != 1 else ""
+			]
+		else:
+			_dominant_label.text = "Dominant: —"
