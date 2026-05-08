@@ -64,7 +64,7 @@ GDScript answers *"does that match what the chart expects?"*
 | `src/detector_node.hpp/.cpp` | Godot `QEngineDetectorNode` (extends `Node`) |
 | `src/register_types.cpp` | GDExtension entry point (`godot_qengine_init`) |
 | `tests/test_pitch_detection.cpp` | Standalone C++ tests (no Godot required) |
-| `tests/test_wav_pitch_detection.cpp` | Real-audio WAV tests using GuitarSet dataset |
+| `tests/test_wav_pitch_detection.cpp` | Real-audio WAV tests using the GuitarSet Rock subset (`*Rock*.wav`) |
 | *(auto-fetched)* | cycfi/Q — downloaded by CMake FetchContent at configure time |
 | *(auto-fetched)* | cycfi/infra — downloaded by CMake FetchContent at configure time |
 
