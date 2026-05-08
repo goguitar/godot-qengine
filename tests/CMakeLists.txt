@@ -30,3 +30,13 @@ target_compile_definitions(qengine_wav_tests PRIVATE
 )
 
 add_test(NAME wav_pitch_detection COMMAND $<TARGET_FILE:qengine_wav_tests>)
+
+# ── C ABI bridge tests ─────────────────────────────────────────────────────────
+add_executable(qengine_ffi_tests test_ffi_bridge.cpp)
+target_link_libraries(qengine_ffi_tests PRIVATE qengine_ffi)
+target_compile_options(qengine_ffi_tests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W0>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>
+)
+
+add_test(NAME ffi_bridge COMMAND $<TARGET_FILE:qengine_ffi_tests>)

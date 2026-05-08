@@ -4,6 +4,7 @@ const INSTRUMENTS: PackedStringArray = ["Guitar", "Bass"]
 const GUITAR_TUNINGS: PackedStringArray = ["Standard", "DropD", "OpenD", "DropC"]
 const BASS_TUNINGS: PackedStringArray = ["Standard", "DropD"]
 const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
+const NOTE_NAMES := ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 @onready var _back_button: Button = $RootMargin/RootVBox/Top/BackButton
 @onready var _instrument_opt: OptionButton = $RootMargin/RootVBox/Controls/ControlsHBox/InstrumentOption
@@ -18,9 +19,9 @@ const DEFAULT_DATASET_DIR := "res://tests/dataset/guitarset/audio/mic"
 @onready var _confidence: Label = $RootMargin/RootVBox/InfoCard/InfoVBox/Confidence
 @onready var _status_bar: Label = $RootMargin/RootVBox/StatusBar
 
-@onready var _detector_node: QEngineDetectorNode = $QEngineDetectorNode
+@onready var _detector_node = $QEngineDetectorNode
 
-var _audio_effect: AudioEffectQEngine = null
+var _audio_effect = null
 var _rustortion_effect = null
 var _dataset_player: AudioStreamPlayer = null
 var _monitor_player: AudioStreamPlayer = null
@@ -55,7 +56,7 @@ func _process(_delta: float) -> void:
 		_play_current_file()
 
 	if _audio_effect and _playing:
-		_update_detected(_audio_effect.poll_notes())
+		_update_detected()
 
 func _toggle_play() -> void:
 	_playing = not _playing
@@ -106,10 +107,10 @@ func _apply_detector_tuning() -> void:
 	var tuning: String = _selected_tuning()
 	if _instrument == "Bass" and tuning != "DropD":
 		tuning = "Standard"
-	if _audio_effect:
-		_audio_effect.tuning = tuning
-	if _detector_node:
-		_detector_node.tuning = tuning
+	if _audio_effect and _audio_effect.has_method("set"):
+		_audio_effect.set("tuning", tuning)
+	if _detector_node and _detector_node.has_method("set"):
+		_detector_node.set("tuning", tuning)
 		_detector_node.init_detector()
 
 func _ensure_audio_effect_on_capture_bus() -> void:
@@ -120,7 +121,7 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 
 	for i in AudioServer.get_bus_effect_count(bus_idx):
 		var fx := AudioServer.get_bus_effect(bus_idx, i)
-		if fx is AudioEffectQEngine:
+		if fx and fx.has_method("poll_notes"):
 			_audio_effect = fx
 		if _rustortion_effect == null and fx and fx.is_class("AudioEffectRustortion"):
 			_rustortion_effect = fx
@@ -130,13 +131,17 @@ func _ensure_audio_effect_on_capture_bus() -> void:
 		_ensure_rustortion_on_bus(bus_idx)
 		return
 
-	var new_fx := ClassDB.instantiate("AudioEffectQEngine") as AudioEffectQEngine
+	var new_fx: Object = ClassDB.instantiate("AudioEffectQEngine")
 	if new_fx == null:
 		_status_bar.text = "Status: failed to create AudioEffectQEngine"
 		return
-	new_fx.tuning = _selected_tuning()
-	AudioServer.add_bus_effect(bus_idx, new_fx, 0)
-	_audio_effect = new_fx
+	if new_fx is AudioEffect:
+		new_fx.set("tuning", _selected_tuning())
+		AudioServer.add_bus_effect(bus_idx, new_fx, 0)
+		_audio_effect = new_fx
+	else:
+		_status_bar.text = "Status: AudioEffectQEngine is not an AudioEffect on this build"
+		return
 	_ensure_rustortion_on_bus(bus_idx)
 
 func _ensure_rustortion_on_bus(bus_idx: int) -> void:
@@ -230,22 +235,34 @@ func _load_wav(path: String) -> AudioStreamWAV:
 		return ResourceLoader.load(path, "AudioStreamWAV") as AudioStreamWAV
 	return AudioStreamWAV.load_from_file(path)
 
-func _update_detected(notes: Array) -> void:
-	var best: Dictionary = {}
-	var best_conf := -1.0
-	for item in notes:
-		var conf: float = item.get("periodicity", 0.0)
-		if conf > best_conf:
-			best_conf = conf
-			best = item
-	if best_conf < 0.0:
-		return
+func _update_detected() -> void:
+	var latest: Dictionary = _audio_effect.get_latest_detection()
+	var freq: float = float(latest.get("pitch_hz", 0.0))
+	var conf: float = float(latest.get("confidence", 0.0))
+	var note: String = _note_class_from_midi(int(latest.get("midi_note", -1)))
 
-	var note: String = String(best.get("note", ""))
-	var freq: float = best.get("frequency", 0.0)
+	var chord_frames: Array = _audio_effect.pop_chord_frames()
+	if not chord_frames.is_empty():
+		var chord: Dictionary = chord_frames[chord_frames.size() - 1]
+		var dom_midi: int = int(chord.get("dominant_midi", -1))
+		var dom_note: String = _note_class_from_midi(dom_midi)
+		if not dom_note.is_empty():
+			note = dom_note
+		var dom_freq: float = float(chord.get("dominant_pitch_hz", 0.0))
+		if dom_freq > 0.0:
+			freq = dom_freq
+		var dom_conf: float = float(chord.get("dominant_confidence", 0.0))
+		if dom_conf > 0.0:
+			conf = dom_conf
+
 	_detected.text = "Detected: %s" % (note if note != "" else "--")
 	_frequency.text = "Frequency: %.1f Hz" % freq if freq > 0.0 else "Frequency: --"
-	_confidence.text = "Confidence: %.0f%%" % (best_conf * 100.0)
+	_confidence.text = "Confidence: %.0f%%" % (conf * 100.0)
+
+func _note_class_from_midi(midi: int) -> String:
+	if midi < 0 or midi > 127:
+		return ""
+	return NOTE_NAMES[((midi % 12) + 12) % 12]
 
 func _wanted_keys(instrument: String, tuning: String) -> PackedStringArray:
 	if instrument == "Bass":

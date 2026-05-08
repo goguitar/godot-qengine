@@ -28,3 +28,5 @@ demo/**/*.dylib
 
 # cargo mutants (legacy, keep for safety)
 **/mutants.out*/
+rust/target/
+Cargo.lock
