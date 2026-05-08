@@ -6,7 +6,10 @@ fn main() {
         println!("cargo:rustc-link-lib=static=qengine_ffi");
         println!("cargo:rustc-link-lib=static=qengine_core");
         if env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default() != "msvc" {
-            println!("cargo:rustc-link-lib=dylib=stdc++");
+            match env::var("CARGO_CFG_TARGET_OS").unwrap_or_default().as_str() {
+                "macos" => println!("cargo:rustc-link-lib=dylib=c++"),
+                _ => println!("cargo:rustc-link-lib=dylib=stdc++"),
+            }
         }
     }
 
